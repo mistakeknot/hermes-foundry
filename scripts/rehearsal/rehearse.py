@@ -18,6 +18,7 @@ removed too unless --keep, which retains files only):
 
 --keep: owned processes (the Webapp and its helpers) are ALWAYS stopped, on success, failure and signals. --keep only
 retains the scratch home's files (and the run directory) for inspection; nothing is left running.
+The browser session is closed on every exit path, including a failed or timed-out open (see README, Cleanup).
 
 Confinement (no override, no fallback): BB_THREAD_STORAGE must name your thread storage directory. Each run makes a
 fresh directory foundry-rh-run.* under it and keeps everything inside: scratch homes (homes/), temporary scripts and
@@ -360,26 +361,57 @@ def seed(hh, spec, states=None):
 
 
 # ---- browser ----------------------------------------------------------------------------------------------
+DEAD_STATES = ("closed", "stopped", "expired")
+
+
+def bb_cli(args, timeout):
+    """Every `bb browser-automation` call goes through here (one place to fake in the selftest)."""
+    return subprocess.run(["bb", "browser-automation"] + args, capture_output=True, text=True, timeout=timeout)
+
+
+def live_sessions():
+    """Ids of this thread's browser sessions that are not dead."""
+    r = bb_cli(["list", "--json"], 60)
+    if r.returncode: raise RuntimeError("cannot list browser sessions: " + redact(r.stdout + r.stderr)[-300:])
+    return {x["id"] for x in json.loads(r.stdout) if isinstance(x, dict) and x.get("id") and x.get("state") not in DEAD_STATES}
+
+
 class Browser:
     def __init__(self, scriptdir):
-        """scriptdir is inside the scratch home: sign-in scripts hold a one-use ticket and live only there."""
+        """No browser exists yet: construction is local only, so close() can be registered before open() starts one.
+        scriptdir is inside the scratch home: sign-in scripts hold a one-use ticket and live only there."""
         self.sdir = scriptdir
         os.makedirs(self.sdir, mode=0o700, exist_ok=True)
-        self.host = bb_host()
+        self.host = None
         self.sid = None
-        r = subprocess.run(["bb", "browser-automation", "open", "--backend", "local", "--headless", "--machine", self.host, "--json"],
-                           capture_output=True, text=True, timeout=180)
+        self.before = None          # live sessions before open(); set once an open is attempted
+        self.directive = None
+        self.images = []
+
+    def open(self):
+        """Open the headless session. `bb browser-automation open` takes no caller-chosen identifier, so the run-specific
+        handle is the set difference of this thread's live sessions around the call: if the call times out or its
+        answer cannot be read, close() finds the session that appeared and closes it."""
+        self.host = bb_host()
+        self.before = live_sessions()
+        r = bb_cli(["open", "--backend", "local", "--headless", "--machine", self.host, "--json"], 180)
         d = json.loads(r.stdout)
         self.sid = d.get("id") or d.get("sessionId") or d["session"]["id"]
         self.directive = d.get("previewDirective")
-        self.images = []
+
+    def _recover(self):
+        """open() was attempted but no session id is known: close the one new live session, or refuse to guess."""
+        new = live_sessions() - self.before
+        if not new: return
+        if len(new) > 1:
+            raise RuntimeError("browser acquisition failed and several new sessions appeared; none closed, close these by hand: " + ", ".join(sorted(new)))
+        self.sid = next(iter(new))
 
     def run(self, js, timeout=90):
         fd, path = tempfile.mkstemp(suffix=".js", prefix="js.", dir=self.sdir)      # mode 0600, inside the scratch home
         os.write(fd, js.encode()); os.close(fd)
         try:
-            r = subprocess.run(["bb", "browser-automation", "run", self.sid, "--script-file", path, "--script-host", self.host,
-                                "--timeout", f"{timeout}s", "--json"], capture_output=True, text=True, timeout=timeout + 30)
+            r = bb_cli(["run", self.sid, "--script-file", path, "--script-host", self.host, "--timeout", f"{timeout}s", "--json"], timeout + 30)
         finally:
             os.unlink(path)
         try:
@@ -408,9 +440,11 @@ class Browser:
         return dest
 
     def close(self):
-        if not self.sid: return
+        if self.before is None: return              # open() was never attempted
         with uninterruptible():
-            r = subprocess.run(["bb", "browser-automation", "close", self.sid, "--json"], capture_output=True, text=True, timeout=60)
+            if not self.sid: self._recover()
+            if not self.sid: return
+            r = bb_cli(["close", self.sid, "--json"], 60)
         if r.returncode and "session_unavailable" not in (r.stdout + r.stderr):
             raise RuntimeError("browser close failed: " + redact(r.stdout + r.stderr)[-300:])
 
@@ -447,9 +481,17 @@ def session(a, live, boards=None, states=None):
         st = up(live=live, boards=boards, states=states, keep=a.keep)
         stack.callback(down, st, a.keep)                 # registered first, so it runs last; always stops processes
         b = Browser(os.path.join(st["home"], "scripts"))
-        stack.callback(b.close)
+        stack.callback(b.close)                          # registered before open(), so a failed open is still cleaned up
+        b.open()
         print(b.directive or "", flush=True)
         yield st, b
+
+
+def s_order_ok():
+    """True if session() registers b.close ahead of b.open() (checked on the source, so a refactor cannot silently undo it)."""
+    import inspect
+    src = inspect.getsource(session)
+    return 0 <= src.index("stack.callback(b.close)") < src.index("b.open()")
 
 
 def head():
@@ -531,9 +573,35 @@ def checklist_verdict(res, plan, floor, server):
                 if s.get("ok") is not True: f.append(f"{ui} trial {i} {s.get('step')}: UI check failed (ok={s.get('ok')})")
                 if ui == "pane" and s.get("step") in ("status", "assign") and s.get("scene_ok") is not True:
                     f.append(f"pane trial {i} {s.get('step')}: scene did not redraw (scene_ok={s.get('scene_ok')})")
+    # Database evidence: exactly one row per (UI, card) of the trials above, expected values taken from the plan (never
+    # from the row), and the database values must equal them.
+    expected, used = {}, set()
+    for ui in ("pane", "board"):
+        trials = res.get(ui) or []
+        for i, (status, profile) in enumerate(plan):
+            card = trials[i].get("card") if i < len(trials) and isinstance(trials[i], dict) else None
+            if not isinstance(card, str) or not card:
+                f.append(f"{ui} trial {i}: no card id")
+            elif card in used:
+                f.append(f"{ui} trial {i}: card {card} is used by more than one trial")
+            else:
+                used.add(card)
+                expected[(ui, card)] = [status, profile]
     if len(server) != 2 * n: f.append(f"{len(server)} DB checks, expected {2 * n}")
+    seen = {}
     for x in server:
-        if x.get("ok") is not True: f.append(f"DB check {x.get('ui')} {x.get('card')}: want {x.get('want')}, got {x.get('db')}")
+        if not isinstance(x, dict):
+            f.append(f"DB row is not an object: {x!r}"); continue
+        key = (x.get("ui"), x.get("card"))
+        seen[key] = seen.get(key, 0) + 1
+        if key not in expected:
+            f.append(f"DB row for {key[0]} {key[1]} matches no trial"); continue
+        want = expected[key]
+        if x.get("want") != want: f.append(f"DB row {key[0]} {key[1]}: want {x.get('want')}, plan says {want}")
+        if x.get("db") != want: f.append(f"DB row {key[0]} {key[1]}: database has {x.get('db')}, plan says {want}")
+        if x.get("ok") is not True: f.append(f"DB check {key[0]} {key[1]}: ok={x.get('ok')}")
+    for key in expected:
+        if seen.get(key, 0) != 1: f.append(f"DB rows for {key[0]} {key[1]}: {seen.get(key, 0)}, expected exactly 1")
     return f
 
 
@@ -720,11 +788,12 @@ def cmd_selftest(a):
             t(f"confine refuses {bad_env!r}", True)
     t("a process that is not ours is not owned", not owned(1, "/nonexistent/home"))
     t("this process is never owned", not owned(os.getpid(), "/x"))
-    plan = [("blocked", "coder")] * 3
+    plan = [tuple(x) for x in CHECKLIST_PLAN]
     step = lambda n, **k: dict(step=n, ms=1, clicks=1, keys=0, ok=True, **k)
     pane = [{"card": f"c{i}", "steps": [step("open"), step("status", scene_ok=True), step("assign", scene_ok=True)]} for i in range(3)]
     board = [{"card": f"b{i}", "steps": [step("open"), step("status"), step("assign")]} for i in range(3)]
-    server = [{"ui": u, "card": c["card"], "want": ["blocked", "coder"], "db": ["blocked", "coder"], "ok": True} for u, cs in (("pane", pane), ("board", board)) for c in cs]
+    server = [{"ui": u, "card": c["card"], "want": list(CHECKLIST_PLAN[i]), "db": list(CHECKLIST_PLAN[i]), "ok": True}
+              for u, cs in (("pane", pane), ("board", board)) for i, c in enumerate(cs)]
     floor = {"eval_ms": 1, "click_ms": 2}
     good = lambda: ({"pane": json.loads(json.dumps(pane)), "board": json.loads(json.dumps(board))}, json.loads(json.dumps(server)))
     r, s2 = good(); t("verdict passes a clean run", checklist_verdict(r, plan, floor, s2) == [])
@@ -770,6 +839,58 @@ def cmd_selftest(a):
     d = cp(); del d["failures"]; t("strict verdict fails without the failures field", bool(strict_verdict(d)))
     d = cp(); del d["floor"]; t("strict verdict fails without the floor", bool(strict_verdict(d)))
     t("strict verdict fails a non-object", bool(strict_verdict([])))
+    # database evidence must match each trial and the fixed plan
+    dbd = lambda: dict(plan=[list(x) for x in CHECKLIST_PLAN], res={"pane": json.loads(json.dumps(pane)), "board": json.loads(json.dumps(board))}, srv=json.loads(json.dumps(server)))
+    v = lambda d: checklist_verdict(d["res"], d["plan"], floor, d["srv"])
+    d = dbd(); d["srv"] = [dict(d["srv"][0]) for _ in range(6)]; t("verdict fails six duplicated rows", bool(v(d)))
+    d = dbd(); d["srv"][2]["card"] = "someone-else"; t("verdict fails a row for the wrong card", bool(v(d)))
+    d = dbd(); d["srv"][3]["want"] = ["done", "reviewer"]; d["srv"][3]["db"] = ["done", "reviewer"]; t("verdict fails a row whose want differs from the plan", bool(v(d)))
+    d = dbd(); d["srv"][1]["db"] = ["todo", "coder"]; t("verdict fails a row whose db differs while ok is true", bool(v(d)))
+    d = dbd(); d["srv"][5]["ui"] = "pane"; t("verdict fails a row under the wrong UI", bool(v(d)))
+    d = dbd(); d["srv"].append(dict(d["srv"][0])); t("verdict fails an extra row", bool(v(d)))
+    d = dbd(); d["res"]["board"][0]["card"] = d["res"]["pane"][0]["card"]; t("verdict fails a card shared by two trials", bool(v(d)))
+    d = dbd(); d["srv"][4] = "junk"; t("verdict fails a row that is not an object", bool(v(d)))
+    d = dbd(); t("verdict passes matching rows", v(d) == [])
+    # browser acquisition is recoverable: close() finds the session a failed open left behind
+    import types
+    sessions, closed, mode = {"old": "open"}, [], {}
+
+    def fake(args, timeout):
+        cmd = args[0]
+        if cmd == "list":
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps([{"id": i, "state": s} for i, s in sessions.items()]), stderr="")
+        if cmd == "open":
+            for i in mode.get("new", ()): sessions[i] = "open"
+            if mode.get("fail") == "timeout": raise subprocess.TimeoutExpired(args, timeout)
+            return types.SimpleNamespace(returncode=0, stdout=mode.get("out", ""), stderr="")
+        if cmd == "close":
+            closed.append(args[1]); sessions[args[1]] = "closed"
+            return types.SimpleNamespace(returncode=0, stdout="{}", stderr="")
+        raise AssertionError(args)
+    real_cli, real_host = bb_cli, bb_host
+    globals()["bb_cli"], globals()["bb_host"] = fake, lambda: "h"
+    try:
+        def attempt(**m):
+            mode.clear(); mode.update(m); closed.clear()
+            sessions.clear(); sessions["old"] = "open"
+            b = Browser(os.path.join(RUN, "tmp", "bscripts"))
+            try: b.open()
+            except Exception: pass
+            return b
+        b = Browser(os.path.join(RUN, "tmp", "bscripts")); b.close(); t("close before open() does nothing", closed == [])
+        b = attempt(new=["n1"], fail="timeout"); b.close(); t("close recovers a session after an open() timeout", closed == ["n1"])
+        b = attempt(new=["n2"], out="not json"); b.close(); t("close recovers a session after an unparseable open() reply", closed == ["n2"])
+        b = attempt(new=["n3"], out="{}"); b.close(); t("close recovers a session after a reply with no id", closed == ["n3"])
+        b = attempt(new=["n4"], out=json.dumps({"id": "n4"})); b.close(); t("close closes the id from a good reply", closed == ["n4"])
+        b = attempt(fail="timeout"); b.close(); t("close does nothing when no session appeared", closed == [])
+        b = attempt(new=["a", "b"], fail="timeout")
+        try: b.close(); t("close refuses to guess among several new sessions", False)
+        except RuntimeError: t("close refuses to guess among several new sessions", closed == [])
+        t("an old session is never closed by recovery", "old" not in closed)
+    finally:
+        globals()["bb_cli"], globals()["bb_host"] = real_cli, real_host
+    # session() registers the browser close before open(): a failing open still reaches it
+    t("session registers the browser close before open()", s_order_ok())
     # the shutdown callback always stops owned processes, with or without --keep
     calls = []
     real_stop, real_clean = stop_home, cleanup_script

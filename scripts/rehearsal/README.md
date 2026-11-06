@@ -25,6 +25,12 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
   inside the run directory.
 - **Cleanup.** Cleanup runs on success, failure, timeout, Ctrl-C, SIGTERM and SIGHUP (nested `finally`/`ExitStack`: the browser is
   closed, then the home's processes are stopped, then the home is removed; each step runs even if another fails).
+  The browser close is registered before the browser is opened. `bb browser-automation open` accepts no caller-chosen
+  identifier, so if it times out or its reply cannot be read, close() lists this thread's live sessions and closes the one
+  that appeared during the call. If several new sessions appeared it closes none and fails, naming them. Limit: a session
+  that another process of the same thread opens during that same call would be indistinguishable, so run one rehearsal at a
+  time per thread. A failure of `bb` itself (for example the host being down) can also stop the close; that is reported as a
+  failed run, never swallowed.
   Owned processes are always stopped. `--keep` only keeps files: the scratch home and run directory stay for inspection,
   but the Webapp and its helpers are stopped on success, failure and signals alike, so nothing is left running.
   A cleanup failure fails the run and is never swallowed. A run that is killed with SIGKILL, or a host crash, cannot clean up:
@@ -40,10 +46,12 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
 - **Screenshot names.** `SHOTS_MODES` accepts only `fixture` and `live` (no duplicates, checked before anything is created).
   Every screenshot name must be a plain file name, and its destination must resolve directly inside `out/` and not be a symlink.
 - **Exit codes.** `checklist` exits 0 only if every trial, UI check, scene check and database check passed (all three trials in the
-  pane and on the board, `ok` and `scene_ok` true, every database row matching). `shots` exits non-zero if any target card or image is
+  pane and on the board, `ok` and `scene_ok` true). Database evidence is one row per (UI, card) of those trials, the expected
+  status and profile come from the fixed plan (never from the row), and the value read back from the Hermes database must
+  equal them; duplicate, extra, wrong-card or mismatching rows fail. `shots` exits non-zero if any target card or image is
   missing; live mode seeds blocked and done cards so the targets exist. `install` and `perf` exit non-zero on any failed check.
 - **`verdict` is strict.** It reads nothing into missing data: the saved result must hold the fixed three-trial plan, non-empty
-  pane and board trials, all six database rows, the measured floor, `pass: true` and an empty `failures` list (a recorded
+  pane and board trials, exactly one matching database row per trial (six, each equal to the plan), the measured floor, `pass: true` and an empty `failures` list (a recorded
   harness or cleanup failure fails it), and then every trial, UI, scene and database check is re-judged.
 - **`selftest` is confined too.** It needs `BB_THREAD_STORAGE`, makes its scratch directory inside its own run directory
   (not the system temp dir) and removes that run directory when it ends.
