@@ -144,8 +144,38 @@ describe('valley frame', () => {
     expect(v).not.toBeNull()
     expect(v.style.pointerEvents).toBe('none')
     expect(v.style.background).toContain('radial-gradient')
+    // covers the whole stage: absolutely positioned, pinned to every edge (inset: 0 expands to four longhands in jsdom or stays as the shorthand)
+    expect(v.style.position).toBe('absolute')
+    const edges = [v.style.top, v.style.right, v.style.bottom, v.style.left]
+    expect(v.style.inset === '0px' || v.style.inset === '0' || edges.every((e) => e === '0px' || e === '0')).toBe(true)
+
+    // stacking: canvas, then vignette, then the labels layer, then the header, all siblings in the stage
     const canvas = document.querySelector('canvas')!
-    expect(canvas.compareDocumentPosition(v) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy() // drawn after (over) the canvas
+    const stage = v.parentElement!
+    expect(canvas.parentElement).toBe(stage)
+    const kids = Array.from(stage.children)
+    const iCanvas = kids.indexOf(canvas), iVignette = kids.indexOf(v)
+    expect(iCanvas).toBe(0)
+    expect(iVignette).toBe(iCanvas + 1)
+    const labels = kids[iVignette + 1] as HTMLElement // the layer the scene writes its labels into
+    expect(labels.tagName).toBe('DIV')
+    expect(labels.id).toBe('')
+    expect(labels.style.position).toBe('absolute')
+    expect(labels.style.pointerEvents).toBe('none')
+    const header = kids[iVignette + 2] as HTMLElement
+    expect(header.textContent).toContain('Foundry') // the title row
+    expect(canvas.compareDocumentPosition(v) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(v.compareDocumentPosition(labels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(labels.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+  it('removes the vignette and the scene with the pane', async () => {
+    await mount(() => Promise.reject(new Error('no router')))
+    await waitFor(() => !!document.getElementById('foundry-vignette'), 'the vignette')
+    const r = root!
+    root = null
+    await act(async () => r.unmount())
+    expect(document.getElementById('foundry-vignette')).toBeNull()
+    expect(document.querySelector('canvas')).toBeNull()
   })
 })
 
