@@ -1,3 +1,4 @@
+import sys
 import pytest
 
 from foundry_core.fixture import FixtureSource
@@ -10,6 +11,7 @@ def test_default_and_explicit_fixture():
 
 
 def test_live_requested_but_unavailable_raises_not_fakes(monkeypatch):
+    monkeypatch.setitem(sys.modules, "foundry_core.live", None)  # as on a Hermes without the kanban modules
     with pytest.raises(RuntimeError, match="live"):
         make_source({"FOUNDRY_MODE": "live", "HERMES_HOME": "/nonexistent-foundry-test"})
 
