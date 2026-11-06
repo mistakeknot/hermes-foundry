@@ -136,6 +136,19 @@ describe('fixture mode: the real onDrop callback', () => {
   })
 })
 
+describe('valley frame', () => {
+  it('draws a non-interactive vignette over the canvas, under the labels and header', async () => {
+    await mount(() => Promise.reject(new Error('no router')))
+    await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+    const v = document.getElementById('foundry-vignette') as HTMLElement
+    expect(v).not.toBeNull()
+    expect(v.style.pointerEvents).toBe('none')
+    expect(v.style.background).toContain('radial-gradient')
+    const canvas = document.querySelector('canvas')!
+    expect(canvas.compareDocumentPosition(v) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy() // drawn after (over) the canvas
+  })
+})
+
 describe('live mode: the real onDrop callback', () => {
   it('opens the profile selector, POSTs nothing, claims nothing', async () => {
     const snap: Snapshot = { ...buildFixture(), mode: 'live' }

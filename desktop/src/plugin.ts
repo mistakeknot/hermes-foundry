@@ -8,6 +8,7 @@ import { HttpApi, probeRouter, type Rest } from './http'
 import { MockApi, PROFILES } from './mock'
 import { startSync, type SyncHandle } from './sync'
 import { findCard } from './reducer'
+import { knownStatus } from './status-look'
 import { dropUi, type AssignRequest } from './drag'
 import type { Card, Command, FoundryApi, PaneState, TranscriptReply, Worker } from './types'
 
@@ -127,7 +128,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
 
   const counts = useMemo(() => {
     const n: Record<string, number> = { open: 0, running: 0, blocked: 0, review: 0, done: 0, unknown: 0 }
-    snap?.projects.forEach((p) => p.cards.forEach((c) => { n[c.status]++ }))
+    snap?.projects.forEach((p) => p.cards.forEach((c) => { n[knownStatus(c.status)]++ }))
     return n
   }, [snap])
 
@@ -141,8 +142,10 @@ function FoundryPage({ rest }: { rest: Rest }) {
         h('i', { style: { width: 9, height: 9, borderRadius: 2, background: hex(STATUS_COLOR[k]), display: 'inline-block' } }), `${k} ${counts[k]}`)),
       counts.unknown ? h('span', { style: { display: 'inline-flex', gap: 4, alignItems: 'center' } }, h('i', { style: { width: 9, height: 9, borderRadius: 2, background: hex(STATUS_COLOR.unknown), display: 'inline-block' } }), `other ${counts.unknown}`) : null))
 
-  const stage = h('div', { ref: hostRef, style: { position: 'relative', flex: 1, minWidth: 0, background: '#1d2622', overflow: 'hidden' } },
+  const stage = h('div', { ref: hostRef, style: { position: 'relative', flex: 1, minWidth: 0, background: '#0c1210', overflow: 'hidden' } },
     h('canvas', { ref: canvasRef, style: { position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', cursor: 'grab' } }),
+    // valley frame: darkens the edges so the dark scene sits in the pane instead of floating in bright chrome
+    h('div', { id: 'foundry-vignette', style: { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'radial-gradient(ellipse at 50% 55%, rgba(8,12,11,0) 52%, rgba(8,12,11,0.55) 80%, rgba(8,12,11,0.9) 100%)' } }),
     h('div', { ref: labelsRef, style: { position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' } }),
     header,
     tip ? h('div', { style: { position: 'absolute', left: tip.x, top: tip.y, background: C.card, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '3px 8px', font: `11px ${sans}`, pointerEvents: 'none', maxWidth: 280 } }, tip.label) : null,
@@ -234,7 +237,7 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null }) 
     h('div', { style: { font: `600 15px ${sans}`, lineHeight: 1.25 } }, card.title),
     h('div', { style: { color: C.muted, fontFamily: mono, fontSize: 11, marginTop: 2 } }, card.id),
     h('div', { style: { marginTop: 8, display: 'flex', gap: 6, alignItems: 'center' } },
-      h('span', { style: chip(hex(STATUS_COLOR[card.status])) }, card.status === 'unknown' ? `unknown · ${card.status_native}` : card.status_native),
+      h('span', { style: chip(hex(STATUS_COLOR[knownStatus(card.status)])) }, knownStatus(card.status) === 'unknown' ? `unknown · ${card.status_native}` : card.status_native),
       card.blocked_on === 'human' ? h('span', { id: 'foundry-blocked-human', style: chip('#6fd3ff') }, 'waiting on you') : null),
     h('div', { style: { color: C.muted, marginTop: 8 } }, 'Profile: ', h('span', { style: { color: C.fg } }, card.assignee_profile ?? 'unassigned')),
     h('div', { style: { color: C.muted } }, 'Held by: ', h('span', { style: { color: C.fg } }, p.holderName ?? (card.claimed_by ? `${card.claimed_by} (unknown worker)` : 'nobody'))),

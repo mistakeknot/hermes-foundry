@@ -4,6 +4,7 @@
 // so a status change recolours a scale but never moves anything.
 import { hashString, rng } from './rng'
 import type { Card, Project } from './types'
+import { knownStatus } from './status-look'
 
 export type V3 = [number, number, number]
 export type Material = 'stone' | 'lichen' | 'coral'
@@ -120,7 +121,7 @@ export function buildCreature(project: Project): CreatureSpec {
 
     const counts = emptyCounts()
     const scales: ScaleSpec[] = list.map((c, i) => {
-      counts[c.status]++
+      counts[knownStatus(c.status)]++
       const t = 0.08 + 0.9 * ((i + 0.5) / list.length)
       const f = frameAt(path, t)
       const phi = i * GOLDEN
