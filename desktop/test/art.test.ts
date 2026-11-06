@@ -147,6 +147,40 @@ describe('the focus fit survives the orbit controls through the real loop', () =
     expect(s.focusedId).toBe(v.spec.projectId)
     expect(inFreeRect(s, v, 140, 400)).toBe(true)
   })
+  it('the raised orbit limit follows the fit: rises when narrowed, falls when widened, returns to baseline on release', () => {
+    const s = mk(1000, 600)
+    s.update(oneBigEpic(34))
+    const v = [...s.creatures.values()][0]
+    s.userMoved = true
+    s.baseMaxDistance = 70; s.controls.maxDistance = 70
+    s.focusCreature(v.spec.projectId)
+    runLoop(s, 20)
+    const wideFit = s.camera.position.distanceTo(s.controls.target)
+    expect(s.controls.maxDistance).toBeCloseTo(Math.max(70, wideFit * 1.05), 5)
+    s.resize(140, 400)
+    runLoop(s, 20)
+    const narrowFit = s.camera.position.distanceTo(s.controls.target)
+    expect(narrowFit).toBeGreaterThan(70)
+    expect(s.controls.maxDistance).toBeGreaterThanOrEqual(narrowFit)
+    expect(s.controls.maxDistance).toBeGreaterThan(70) // allowance rose
+    s.resize(1000, 600)
+    runLoop(s, 20)
+    const backFit = s.camera.position.distanceTo(s.controls.target)
+    expect(backFit).toBeCloseTo(wideFit, 3)
+    expect(s.controls.maxDistance).toBeCloseTo(Math.max(70, backFit * 1.05), 5) // fell to what the new fit needs
+    // narrow again, then the user orbits (release): the camera is not snapped in, and the limit relaxes to the baseline as it zooms in
+    s.resize(140, 400)
+    runLoop(s, 20)
+    const before = s.camera.position.distanceTo(s.controls.target)
+    expect(s.controls.maxDistance).toBeGreaterThan(70)
+    s.controls.dispatchEvent({ type: 'start' })
+    expect(s.focusedId).toBeNull()
+    runLoop(s, 20)
+    expect(s.camera.position.distanceTo(s.controls.target)).toBeCloseTo(before, 3) // not snapped inward
+    s.camera.position.sub(s.controls.target).multiplyScalar(0.5).add(s.controls.target) // user zooms to half
+    runLoop(s, 5)
+    expect(s.controls.maxDistance).toBe(70) // back to baseline
+  })
   it('the depth range is re-applied after controls.update in the same loop', () => {
     const s = mk(800, 600)
     s.update(applySnapshot(buildFixture()).snap)

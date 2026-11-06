@@ -270,7 +270,8 @@ export class FoundryScene {
     const { pts, mid } = this.frameGeo
     this.controls.target.set(mid.x, 0, mid.z)
     this.frameDist = fitCamera(this.camera, this.controls.target, pts, this.viewW, this.viewH)
-    this.controls.maxDistance = Math.max(70, this.frameDist * 1.3)
+    this.baseMaxDistance = Math.max(70, this.frameDist * 1.3)
+    this.controls.maxDistance = this.baseMaxDistance
     // keep the fog's grip on the creatures constant when a large or tall valley pushes the camera back
     if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = Math.min(0.015, 0.55 / this.frameDist)
     this.controls.update()
@@ -295,10 +296,19 @@ export class FoundryScene {
   /**
    * The orbit controls clamp the camera to maxDistance on every update(). A fitted creature view in a narrow pane can need
    * a longer distance than the valley's bound, and the clamp would pull the camera in and crop the creature, so the bound
-   * grows to cover the fit (frameValley sets it again from the valley whenever it reframes). It never shrinks here.
+   * is the larger of the valley's baseline and the current fit, recomputed on every focus and refit (so a pane that is
+   * widened again gives the extra back) and relaxed to the baseline once the user takes the view (relaxReach).
    */
   private allowReach(dist: number) {
-    this.controls.maxDistance = Math.max(this.controls.maxDistance, dist * 1.05)
+    this.controls.maxDistance = Math.max(this.baseMaxDistance, dist * 1.05)
+  }
+  /** The valley's own orbit limit; a focus fit may raise controls.maxDistance above it, never below. */
+  private baseMaxDistance = 70
+  /** Once the user takes the view back, bring a raised limit down to the baseline as the camera allows (never snapping it in). */
+  private relaxReach() {
+    if (this.focusedId || this.controls.maxDistance <= this.baseMaxDistance) return
+    const d = this.camera.position.distanceTo(this.controls.target)
+    this.controls.maxDistance = Math.max(this.baseMaxDistance, Math.min(this.controls.maxDistance, d))
   }
 
   /** Where the camera and target must be to frame one creature in the pane. The camera is left where it was. */
@@ -823,6 +833,7 @@ export class FoundryScene {
       this.camera.position.lerpVectors(this.focus.fromP, this.focus.toP, k)
       if (this.focus.t >= 1) this.focus = null
     }
+    this.relaxReach()
     this.controls.update()
     setDepthRange(this.camera, this.camera.position.distanceTo(this.controls.target)) // follows the user's zoom too
     this.glowTime.value = t
