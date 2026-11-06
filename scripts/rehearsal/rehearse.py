@@ -275,7 +275,16 @@ def stop_home(st):
         for _ in range(100):
             if not any(owned(p, hh) for p in mine): break
             time.sleep(0.2)
+    # Hermes' SIGTERM handler spawns a detached 5 s forensic helper (gateway/shutdown_forensics.py: `timeout 5 bash -c ... pstree`)
+    # that inherits this environment and outlives its parent. It is not in `cand`, so re-scan and signal what appears until none is left.
     left = owned_pids(hh)
+    for _ in range(100):
+        if not left: break
+        for p in left:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                if owned(p, hh): os.kill(p, signal.SIGKILL)
+        time.sleep(0.2)
+        left = owned_pids(hh)
     if left:
         raise RuntimeError(f"could not stop processes of {hh}: {sorted(left)}")
 

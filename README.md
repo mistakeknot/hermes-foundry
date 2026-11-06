@@ -19,6 +19,22 @@ data, so you can try it on any Hermes. Live mode drives the real Hermes kanban (
 Requirements: Hermes with the plugin system (`hermes plugins install`) and a dashboard (`hermes dashboard`), and `git`.
 Node is not needed to use the plugin: the pane's build output, `desktop/plugin.js`, is committed.
 
+Hermes is the open-source agent at <https://github.com/NousResearch/hermes-agent>. The clean-install rehearsal used commit
+`5ec43faa` (2026-11-06); the plugin system, the dashboard and the Webapp pane need a recent checkout, so use that commit or
+newer. Hermes needs **Python 3.14**. Its core dependencies (`ruamel.yaml` among them) are declared for
+`python_version >= '3.14'` only, so on an older Python `pip install -e .` succeeds, installs none of them, and every
+`hermes` command then fails with `ModuleNotFoundError: No module named 'ruamel'`. A working setup:
+
+    git clone https://github.com/NousResearch/hermes-agent && cd hermes-agent
+    git checkout 5ec43faa
+    uv venv .venv --python 3.14 && uv pip install -p .venv/bin/python -e .
+
+The pane is served by the Hermes Webapp, which needs its renderer built once:
+
+    .venv/bin/hermes webapp --build-only
+
+This takes about a minute and writes `apps/desktop/dist-webapp` **inside the Hermes checkout**.
+
     hermes plugins install <git-url> --no-enable
     hermes plugins enable foundry
     hermes dashboard
@@ -130,6 +146,15 @@ Python (router, sources, tools, install gate). The repo pins no Python dependenc
 On a clean virtualenv with exactly those three packages this gave 262 passed, 31 skipped, with no Hermes installed
 (2026-11-06). The skips are the live-mode tests, which need a Hermes
 that has the kanban modules; point `FOUNDRY_HERMES_SRC` (a test-only variable) at such a Hermes checkout to run them.
+That virtualenv cannot import Hermes (its dependencies are missing, see Python 3.14 above), and with
+`FOUNDRY_HERMES_SRC` set the live tests fail rather than skip. Run them with the Hermes virtualenv's interpreter, with
+`pytest` and `httpx` added to it:
+
+    uv pip install -p /path/to/hermes-agent/.venv/bin/python pytest httpx
+    FOUNDRY_HERMES_SRC=/path/to/hermes-agent /path/to/hermes-agent/.venv/bin/python -m pytest -q
+
+This gave 293 passed, 0 skipped against Hermes `5ec43faa` (2026-11-06). Replay mode (`FOUNDRY_REPLAY=1`) is covered
+by `tests/test_router.py`; the rehearsal harness in `scripts/rehearsal` does not exercise it.
 The install-gate tests need `bash` and `curl`. Design notes are in `docs/contract.md` (the API contract, still a draft)
 and `docs/plan.md`.
 
@@ -137,8 +162,10 @@ and `docs/plan.md`.
 
 These are observations from the maintainers' hand runs in November 2026, not reproducible from this checkout (no
 benchmark harness or recorded measurements are committed): in headless Chromium with software WebGL (SwiftShader) the
-pane ran at roughly 29 to 48 frames per second, depending on card count and how busy the host was. Nothing has been
-measured on a real GPU.
+pane ran at roughly 29 to 48 frames per second, depending on card count and how busy the host was. The
+clean-install rehearsal (`scripts/rehearsal`, 2026-11-06) measured 46 to 54 fps at 30 and 110 cards, software-rendered
+and with the host under load (load average 10 to 16 on 32 cores, above the harness's own 0.2-per-core threshold), so
+treat every figure here as a floor for a loaded machine. Nothing has been measured on a real GPU.
 
 ## Known limits
 
