@@ -18,9 +18,9 @@ vi.mock('three', async (orig) => {
 
 import { FoundryScene, type Pick } from '../src/scene'
 import { DRAG_SLOP, dropOutcome, dropUi, isDrag, type AssignRequest } from '../src/drag'
-import { MockApi, buildFixture } from '../src/mock'
-import { applySnapshot, findCard } from '../src/reducer'
-import type { Command } from '../src/types'
+import { buildFixture } from '../src/mock'
+import { applySnapshot } from '../src/reducer'
+import { FakeCanvas, asCanvas } from './fakecanvas'
 
 beforeAll(() => {
   const g = globalThis as Record<string, unknown>
@@ -56,39 +56,73 @@ describe('dropOutcome: only a scale opens the selector', () => {
   })
 })
 
-function fakeCanvas() {
-  return { style: {}, addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }), clientWidth: 800, clientHeight: 600, ownerDocument: { addEventListener() {}, removeEventListener() {} }, getRootNode: () => ({ addEventListener() {}, removeEventListener() {} }), setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture: () => false } as unknown as HTMLCanvasElement
-}
-
-/** A scene whose pickAt answers from a script, so the test drives press / release without WebGL. */
+/** A real FoundryScene on an ordered fake canvas, with real OrbitControls. pickAt answers from a script so no WebGL is
+ *  needed; everything else (listener order, capture, stopImmediatePropagation, bounds) is the production path. */
 function harness() {
   const drops: AssignRequest[] = [], picks: (Pick | null)[] = []
-  const scene = new FoundryScene(fakeCanvas(), { appendChild() {} } as unknown as HTMLElement, { onPick: (p) => picks.push(p), onHover() {}, onDrop: (r) => drops.push(r) }) as any
+  const canvas = new FakeCanvas()
+  const scene = new FoundryScene(asCanvas(canvas), { appendChild() {} } as unknown as HTMLElement, { onPick: (p) => picks.push(p), onHover() {}, onDrop: (r) => drops.push(r) }) as any
   let under: Pick | null = null
   scene.pickAt = () => (under ? { pick: under, label: '' } : null)
-  const ev = (x: number, y = 0) => ({ clientX: x, clientY: y, button: 0, buttons: 1 }) as PointerEvent
+  const orbitMoved = () => {
+    const before = scene.camera.position.clone()
+    scene.controls.update()
+    return scene.camera.position.distanceTo(before) > 1e-9
+  }
   return {
-    scene, drops, picks,
+    scene, canvas, drops, picks, orbitMoved,
     over(p: Pick | null) { under = p },
-    down(x = 0) { scene.onDown(ev(x)) },
-    up(x: number) { scene.onUp(ev(x)) },
+    down(x = 100, id = 1, y = 100) { return canvas.fire('pointerdown', { pointerId: id, x, y }) },
+    move(x: number, y = 100, id = 1) { canvas.fire('pointermove', { pointerId: id, x, y }) },
+    up(x: number, id = 1, y = 100) { canvas.fire('pointerup', { pointerId: id, x, y }) },
+    leave(id = 1) { canvas.fire('pointerleave', { pointerId: id }) },
+    cancel(id = 1) { canvas.fire('pointercancel', { pointerId: id }) },
   }
 }
+const climber: Pick = { kind: 'worker', id: 'w1' }
+
+describe('listener order: a climber press never reaches OrbitControls', () => {
+  it('our pointerdown is registered before OrbitControls', () => {
+    const t = harness()
+    expect(t.canvas.listenerCount('pointerdown')).toBe(2) // ours, then OrbitControls
+    t.over(climber)
+    const e = t.down()
+    expect(e.stopped).toBe(true)
+    expect(t.canvas.captured.size).toBe(0) // OrbitControls never called setPointerCapture
+    t.move(300); t.move(500)
+    expect(t.orbitMoved()).toBe(false) // the camera does not turn under a climber drag
+  })
+  it('control: a press elsewhere is captured by OrbitControls and orbits', () => {
+    const t = harness()
+    t.over({ kind: 'project', id: 'main' })
+    const e = t.down()
+    expect(e.stopped).toBe(false)
+    expect(t.canvas.captured.has(1)).toBe(true)
+    t.move(300)
+    expect(t.orbitMoved()).toBe(true)
+  })
+  it('after a drag ends, orbit works again', () => {
+    const t = harness()
+    t.over(climber); t.down(); t.over(null); t.up(300)
+    t.over({ kind: 'project', id: 'main' }); t.down(100, 2)
+    expect(t.canvas.captured.has(2)).toBe(true)
+  })
+})
 
 describe('scene gesture', () => {
   it('drag from a climber to a scale reports one drop and gives orbit back', () => {
     const t = harness()
-    t.over({ kind: 'worker', id: 'w1' }); t.down()
-    expect(t.scene.controls.enabled).toBe(false) // the camera must not orbit under the drag
-    t.over(card('main:t3')); t.up(60)
+    t.over(climber); t.down()
+    expect(t.scene.controls.enabled).toBe(false)
+    t.move(160); t.over(card('main:t3')); t.up(160)
     expect(t.drops).toEqual([{ cardId: 'main:t3', workerId: 'w1', seq: 1 }])
     expect(t.picks).toEqual([]) // not also a click
     expect(t.scene.controls.enabled).toBe(true)
   })
   it('dropping on empty space is a no-op', () => {
     const t = harness()
-    t.over({ kind: 'worker', id: 'w1' }); t.down()
-    t.over(null); t.up(60)
+    t.over(climber); t.down()
+    t.over(null); t.up(160)
     expect(t.drops).toEqual([])
     expect(t.picks).toEqual([])
     expect(t.scene.controls.enabled).toBe(true)
@@ -99,75 +133,160 @@ describe('scene gesture', () => {
     ['another climber', { kind: 'worker', id: 'w2' } as Pick],
   ])('dropping on %s opens nothing', (_n, target) => {
     const t = harness()
-    t.over({ kind: 'worker', id: 'w1' }); t.down()
-    t.over(target); t.up(60)
+    t.over(climber); t.down()
+    t.over(target); t.up(160)
     expect(t.drops).toEqual([])
   })
   it('a drag that starts off a climber is an orbit and never a drop', () => {
     const t = harness()
     t.over({ kind: 'project', id: 'main' }); t.down()
     expect(t.scene.controls.enabled).toBe(true)
-    t.over(card('main:t3')); t.up(60)
+    t.over(card('main:t3')); t.up(160)
     expect(t.drops).toEqual([])
   })
   it('a press and release on a climber without travel is a click, not a drop', () => {
     const t = harness()
-    t.over({ kind: 'worker', id: 'w1' }); t.down(); t.up(2)
+    t.over(climber); t.down(); t.up(102)
     expect(t.drops).toEqual([])
-    expect(t.picks).toEqual([{ kind: 'worker', id: 'w1' }])
+    expect(t.picks).toEqual([climber])
     expect(t.scene.controls.enabled).toBe(true)
-  })
-  it('leaving the canvas or a pointer cancel mid-drag cancels it', () => {
-    for (const cancel of ['onLeave', 'onCancel']) {
-      const t = harness()
-      t.over({ kind: 'worker', id: 'w1' }); t.down()
-      t.scene[cancel]()
-      expect(t.scene.controls.enabled).toBe(true)
-      t.over(card('main:t3')); t.up(60) // a stray release afterwards must not drop
-      expect(t.drops).toEqual([])
-    }
   })
   it('each drop gets a fresh seq, so dropping on the same card twice refocuses', () => {
     const t = harness()
-    for (let i = 0; i < 2; i++) { t.over({ kind: 'worker', id: 'w1' }); t.down(); t.over(card('main:t3')); t.up(60) }
+    for (let i = 0; i < 2; i++) { t.over(climber); t.down(); t.over(card('main:t3')); t.up(160) }
     expect(t.drops.map((d) => d.seq)).toEqual([1, 2])
   })
 })
 
-describe('a drop never claims and never infers a profile', () => {
-  it('the pane response is UI state only; assigning needs the explicit Assign command', async () => {
-    const api = new MockApi(Date.now, 3_600_000)
-    const sent: Command[] = []
-    const real = api.command.bind(api)
-    api.command = async (c: Command) => { sent.push(c); return real(c) }
-
-    const snap = applySnapshot(await api.snapshot()).snap
-    const target = snap.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
-    const w = snap.workers.find((x) => !x.card_id) ?? snap.workers[0]
-    const before = structuredClone(findCard(snap, target.id)!)
-
-    const out = dropOutcome(w.id, card(target.id), 1)!
-    const ui = dropUi(out.open, snap)!
-    expect(ui.pick).toEqual({ kind: 'card', id: target.id })
-    expect(ui.notice).toContain('does not claim')
-    expect(JSON.stringify(ui)).not.toMatch(/profile"|"type"/) // no profile and no command in the response
-    expect(sent).toEqual([]) // the drop issued nothing
-
-    const after = applySnapshot(await api.snapshot()).snap
-    const c = findCard(after, target.id)!
-    expect(c.claimed_by).toBe(before.claimed_by)
-    expect(c.assignee_profile).toBe(before.assignee_profile)
-    expect(after.workers.find((x) => x.id === w.id)!.card_id).toBe(w.card_id)
-
-    // the selector's Assign is what sends a command, and that command is assign only, with the chosen profile
-    const r = await api.command({ type: 'assign', card_id: target.id, profile: 'reviewer' })
-    expect(r.ok).toBe(true)
-    expect(sent.map((x) => x.type)).toEqual(['assign'])
-    const done = findCard(applySnapshot(await api.snapshot()).snap, target.id)!
-    expect(done.claimed_by).toBe(before.claimed_by) // assign does not claim, in the fixture
+describe('leaving the canvas cancels the drag for good', () => {
+  const dragOut = (t: ReturnType<typeof harness>, withLeave: boolean) => {
+    t.over(climber); t.down()
+    t.move(500)
+    t.move(900) // outside the 800px canvas
+    if (withLeave) t.leave()
+  }
+  it('with capture (no pointerleave): out, back in, release over a scale does not drop', () => {
+    const t = harness()
+    dragOut(t, false)
+    expect(t.scene.controls.enabled).toBe(false) // still the held press, but the gesture is dead
+    t.move(500); t.over(card('main:t3')); t.up(500)
+    expect(t.drops).toEqual([])
+    expect(t.picks).toEqual([])
+    expect(t.scene.controls.enabled).toBe(true)
   })
+  it('with capture: releasing outside the canvas does not drop', () => {
+    const t = harness()
+    dragOut(t, false)
+    t.over(card('main:t3')); t.up(900)
+    expect(t.drops).toEqual([])
+    expect(t.scene.controls.enabled).toBe(true)
+  })
+  it('without capture (pointerleave fires): out, back in, release over a scale does not drop', () => {
+    const t = harness()
+    dragOut(t, true)
+    t.move(500); t.over(card('main:t3')); t.up(500)
+    expect(t.drops).toEqual([])
+    expect(t.scene.controls.enabled).toBe(true)
+  })
+  it('a release in bounds without ever leaving still drops (control)', () => {
+    const t = harness()
+    t.over(climber); t.down(); t.move(400); t.over(card('main:t3')); t.up(400)
+    expect(t.drops).toHaveLength(1)
+  })
+  it('a pointercancel mid-drag cancels it and a stray release does not drop', () => {
+    const t = harness()
+    t.over(climber); t.down(); t.cancel()
+    expect(t.scene.controls.enabled).toBe(true)
+    t.over(card('main:t3')); t.up(160)
+    expect(t.drops).toEqual([])
+  })
+  it('a drag after a cancelled one starts clean', () => {
+    const t = harness()
+    dragOut(t, false); t.up(900)
+    t.over(climber); t.down(); t.over(card('main:t3')); t.up(200)
+    expect(t.drops).toHaveLength(1)
+  })
+})
+
+describe('only the initiating pointer drives the gesture', () => {
+  it('a second pointer pressing on a scale cannot be the drop, and the first drag still completes', () => {
+    const t = harness()
+    t.over(climber); t.down(100, 1)
+    t.over(card('main:t3')); const e2 = t.down(300, 2) // second finger lands on a scale
+    expect(e2.stopped).toBe(true) // and OrbitControls does not capture it
+    expect(t.canvas.captured.has(2)).toBe(false)
+    expect(t.scene.controls.enabled).toBe(false)
+    t.up(300, 2) // second pointer lifts over the scale
+    expect(t.drops).toEqual([])
+    expect(t.scene.controls.enabled).toBe(false) // the first press is still held
+    t.up(300, 1)
+    expect(t.drops).toEqual([{ cardId: 'main:t3', workerId: 'w1', seq: 1 }])
+    expect(t.scene.controls.enabled).toBe(true)
+  })
+  it('first pointer releases first: drops once; the late second release changes nothing', () => {
+    const t = harness()
+    t.over(climber); t.down(100, 1); t.down(300, 2)
+    t.over(card('main:t3')); t.up(300, 1)
+    t.up(300, 2)
+    expect(t.drops).toHaveLength(1)
+    expect(t.scene.controls.enabled).toBe(true)
+  })
+  it('second pointer releases first over a scale: no drop and orbit stays suspended', () => {
+    const t = harness()
+    t.over(climber); t.down(100, 1); t.down(300, 2)
+    t.over(card('main:t3')); t.up(300, 2)
+    expect(t.drops).toEqual([])
+    expect(t.scene.controls.enabled).toBe(false)
+    t.over(null); t.up(300, 1) // first lets go over nothing
+    expect(t.drops).toEqual([])
+    expect(t.scene.controls.enabled).toBe(true)
+  })
+  it('a second pointer cancelling does not cancel the first drag', () => {
+    const t = harness()
+    t.over(climber); t.down(100, 1); t.down(300, 2)
+    t.cancel(2)
+    expect(t.scene.controls.enabled).toBe(false)
+    t.over(card('main:t3')); t.up(300, 1)
+    expect(t.drops).toHaveLength(1)
+  })
+  it('the first pointer cancelling ends the gesture; the second pointer then cannot drop', () => {
+    const t = harness()
+    t.over(climber); t.down(100, 1); t.down(300, 2)
+    t.cancel(1)
+    expect(t.scene.controls.enabled).toBe(true)
+    t.over(card('main:t3')); t.up(300, 2)
+    expect(t.drops).toEqual([])
+  })
+  it('a second pointer leaving or moving outside does not cancel the first drag', () => {
+    const t = harness()
+    t.over(climber); t.down(100, 1); t.down(300, 2)
+    t.move(900, 100, 2); t.leave(2)
+    t.over(card('main:t3')); t.up(300, 1)
+    expect(t.drops).toHaveLength(1)
+  })
+  it('a second pointer joining a non-climber press does not hijack it into a drag', () => {
+    const t = harness()
+    const touch = (type: string, x: number, id: number) => t.canvas.fire(type, { pointerId: id, x, y: 100, touch: true })
+    t.over({ kind: 'project', id: 'main' }); touch('pointerdown', 100, 1)
+    t.over(climber); const e2 = touch('pointerdown', 300, 2) // pinch: second finger happens to land on a climber
+    expect(e2.stopped).toBe(false)
+    expect(t.scene.controls.enabled).toBe(true)
+    t.over(card('main:t3')); touch('pointerup', 300, 2); touch('pointerup', 300, 1)
+    expect(t.drops).toEqual([])
+  })
+})
+
+describe('the drop response is UI state only', () => {
   it('a drop on a card that no longer exists opens nothing', () => {
     const snap = applySnapshot(buildFixture()).snap
     expect(dropUi({ cardId: 'gone:t9', workerId: snap.workers[0].id, seq: 1 }, snap)).toBeNull()
+  })
+  it('the response names the card and says it does not claim; it carries no command or profile', () => {
+    const snap = applySnapshot(buildFixture()).snap
+    const target = snap.projects.flatMap((p) => p.cards)[0]
+    const ui = dropUi({ cardId: target.id, workerId: snap.workers[0].id, seq: 1 }, snap)!
+    expect(ui.pick).toEqual({ kind: 'card', id: target.id })
+    expect(ui.notice).toContain('does not claim')
+    expect(Object.keys(ui).sort()).toEqual(['notice', 'pick', 'request'])
   })
 })
