@@ -25,8 +25,12 @@ newer. Hermes needs **Python 3.14**. Its core dependencies (`ruamel.yaml` among 
 `python_version >= '3.14'` only, so on an older Python `pip install -e .` succeeds, installs none of them, and every
 `hermes` command then fails with `ModuleNotFoundError: No module named 'ruamel'`. `uv venv` does not
 activate the environment, so this guide never relies on a bare `hermes`: it names the venv's executable explicitly. Set
-the two paths once, in this shell, and do the Hermes setup (a working recipe) in a subshell so you stay in your current directory:
+the paths once, in this shell, before the first Hermes command, and do the Hermes setup (a working recipe) in a subshell
+so you stay in your current directory. `HERMES_HOME` selects the Hermes state directory (installed plugins, config);
+unset, Hermes uses your real one (`~/.hermes`), and every Hermes command below would touch it, the renderer build
+included. To try Foundry without touching it, point `HERMES_HOME` at a scratch directory (omit that line for a real install):
 
+    export HERMES_HOME=$(mktemp -d)                # scratch; omit to use your real Hermes home
     export HERMES_DIR=/path/to/hermes-agent        # where the checkout goes
     export HERMES=$HERMES_DIR/.venv/bin/hermes     # the executable every command below uses
     (git clone https://github.com/NousResearch/hermes-agent "$HERMES_DIR" && cd "$HERMES_DIR" \
@@ -39,11 +43,8 @@ The pane is served by the Hermes Webapp, which needs its renderer built once:
 
 This takes about a minute and writes `apps/desktop/dist-webapp` **inside the Hermes checkout**.
 
-Now install Foundry into Hermes. Run these from anywhere. `HERMES_HOME` selects the Hermes state directory that holds
-the installed plugins; unset, Hermes uses your real one (`~/.hermes`). To try Foundry without touching it, point
-`HERMES_HOME` at a scratch directory first (skip that line for a real install):
+Now install Foundry into Hermes. Run these from anywhere, in the same shell (so `HERMES_HOME` and `HERMES` still apply):
 
-    export HERMES_HOME=$(mktemp -d)                # scratch; omit to use your real Hermes home
     "$HERMES" plugins install <git-url> --no-enable
     "$HERMES" plugins enable foundry
     "$HERMES" dashboard

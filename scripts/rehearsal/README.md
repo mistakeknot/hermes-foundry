@@ -15,7 +15,7 @@ and stops everything it started on exit (it removes the home's files too, unless
     python3 scripts/rehearsal/rehearse.py selftest    # offline checks: redaction, confinement, ownership, verdict, screenshot names (needs BB_THREAD_STORAGE)
 
 The plugin is installed from the committed HEAD of this repository (`SRC_URL` overrides), so commit before a rehearsal.
-Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering is software WebGL, so frame rates are a floor, not a GPU figure.
+Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering is software WebGL: frame rates are software-rendered observations under the recorded host load; no minimum or typical rate is established.
 
 ## Prerequisites
 
@@ -24,7 +24,7 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
   command fails with `ModuleNotFoundError: No module named 'ruamel'`. Point `HERMES_PY` at that checkout's 3.14 virtualenv.
 - **Your Hermes home is never used.** Every subcommand creates its own scratch `HERMES_HOME` under the run directory and sets it for each
   Hermes process it starts; the test suite likewise sets `HERMES_HOME` to a temp directory (`tests/test_live.py`).
-- **A prebuilt Webapp renderer.** Run `hermes webapp --build-only` once. The harness starts the Webapp with `--skip-build`,
+- **A prebuilt Webapp renderer.** Run `"$HERMES" webapp --build-only` once (`$HERMES` is the Hermes venv's executable, defined in the root README's Install section; use a scratch `HERMES_HOME` for it as described there). The harness starts the Webapp with `--skip-build`,
   so without `apps/desktop/dist-webapp` in the checkout `install` stops with "--skip-build was passed but no Webapp renderer
   exists". The build **writes into the Hermes checkout** (that directory only); the harness itself writes nothing there.
 - **Replay is not covered.** The harness clears `FOUNDRY_REPLAY` for every Hermes it starts, so replay mode
@@ -58,7 +58,7 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
   in the home's `scripts/` directory (mode 0700) and are deleted right after use, and the link is not persisted. Sign-in tickets,
   tokens and bearer values are redacted from every printed diagnostic and every evidence file.
 - **No harness writes to the Hermes checkout.** `PYTHONDONTWRITEBYTECODE=1` is set for every Hermes subprocess and `TMPDIR`
-  points inside the home. The one-off `hermes webapp --build-only` step (see Prerequisites) does write its renderer there.
+  points inside the home. The one-off `"$HERMES" webapp --build-only` step (see Prerequisites) does write its renderer there.
 - **Screenshot names.** `SHOTS_MODES` accepts only `fixture` and `live` (no duplicates, checked before anything is created).
   Every screenshot name must be a plain file name, and its destination must resolve directly inside `out/` and not be a symlink.
 - **Exit codes.** `checklist` exits 0 only if every trial, UI check, scene check and database check passed (all three trials in the
