@@ -1,6 +1,5 @@
 """Router tests: load dashboard/plugin_api.py by path (as Hermes does) and drive it over HTTP."""
 import importlib.util
-import time
 from pathlib import Path
 
 import pytest
@@ -107,7 +106,7 @@ def test_garbage_cursor_over_http_is_resync(client):
 
 def test_replay_over_http(monkeypatch):
     monkeypatch.setenv("FOUNDRY_REPLAY", "1")
-    monkeypatch.setenv("FOUNDRY_REPLAY_STEP_SECONDS", "0.001")
+    monkeypatch.setenv("FOUNDRY_REPLAY_STEP_SECONDS", "1")
     spec = importlib.util.spec_from_file_location("hermes_dashboard_plugin_foundry_replay", API)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -115,9 +114,10 @@ def test_replay_over_http(monkeypatch):
     app.include_router(mod.router, prefix="/api/plugins/foundry")
     c = TestClient(app)
     c.get("/api/plugins/foundry/snapshot")  # the source starts on first use
-    time.sleep(0.05)  # > 9 steps at 1 ms each
+    src = mod._source
+    src._clock = lambda: src._t0 + 3600.0  # an injected clock: an hour has passed, so every step is due
     snap = c.get("/api/plugins/foundry/snapshot").json()
-    assert snap["mode"] == "fixture" and snap["last_seq"] > 0  # 1 ms per step: the recording is played almost at once
+    assert snap["mode"] == "fixture" and snap["last_seq"] > 0  # the recording has been played to the end
     assert c.post("/api/plugins/foundry/command", json={"type": "stand", "on": True}).json()["ok"] is False
     assert c.post("/api/plugins/foundry/command", json={"type": "reset"}).json() == {"ok": True}
     assert c.get("/api/plugins/foundry/events", params={"since": snap["cursor"], "epoch": snap["epoch"]}).json()["resync"] is True

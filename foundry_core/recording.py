@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,6 +77,12 @@ def _int(v: Any) -> bool:
 
 MAX_SEQ = 10 ** 15 - 1  # parse_cursor accepts at most 15 digits; a larger seq would make every cursor unreadable
 TRANSCRIPT_ROLES = ("user", "assistant", "tool")
+TRANSCRIPT_TEXT_MAX = 2000  # contract: each transcript line's text is cut to 2000 characters
+BOARD_SLUG = re.compile(r"[a-z0-9][a-z0-9\-_]{0,63}")  # contract: a project id is a bare board slug, never with ':'
+# Contract status mapping (display from native). Anything else is passed through with status "unknown";
+# "archived" cards are omitted from the feed, so a recording may not contain one.
+NATIVE_TO_STATUS = {"triage": "open", "todo": "open", "scheduled": "open", "ready": "open",
+                    "running": "running", "blocked": "blocked", "review": "review", "done": "done"}
 
 
 def _str_or_none(v: Any) -> bool:
@@ -111,11 +118,17 @@ def _check_card(where: str, card: Any, board: str | None = None) -> None:
         raise ValueError(f"{where}: card id {cid!r} is not in project {board!r}")
     if card.get("status") not in CARD_STATUSES:
         raise ValueError(f"{where}: card status must be one of {', '.join(CARD_STATUSES)}")
+    native = card["status_native"]
+    if native == "archived":
+        raise ValueError(f"{where}: archived cards are omitted from the feed, so a card may not be archived")
+    if card["status"] != NATIVE_TO_STATUS.get(native, "unknown"):
+        raise ValueError(f"{where}: status {card['status']!r} does not match status_native {native!r} "
+                         f"(the contract maps it to {NATIVE_TO_STATUS.get(native, 'unknown')!r})")
     for key in ("epic_id", "assignee_profile", "claimed_by"):
         if key not in card or not _str_or_none(card[key]):
             raise ValueError(f"{where}: card {key} must be a string or null")
-    if card.get("blocked_on") not in (None, "human"):
-        raise ValueError(f"{where}: card blocked_on must be 'human' or null")
+    if "blocked_on" not in card or card["blocked_on"] not in (None, "human"):
+        raise ValueError(f"{where}: card needs blocked_on, 'human' or null")
     docs = card.get("docs")
     if not isinstance(docs, list) or not all(isinstance(d, dict) and isinstance(d.get("path"), str)
                                              and isinstance(d.get("title"), str) for d in docs):
@@ -130,6 +143,8 @@ def _check_worker(where: str, w: Any) -> None:
     for key in ("id", "name"):
         if not isinstance(w.get(key), str):
             raise ValueError(f"{where}: worker needs a string {key}")
+    if not w["id"].partition(":")[0] or not w["id"].partition(":")[2]:
+        raise ValueError(f"{where}: worker id {w['id']!r} is not '<board>:<id>' or 'fx:<n>'")
     if w.get("state") not in WORKER_STATES:
         raise ValueError(f"{where}: worker state must be one of {', '.join(WORKER_STATES)}")
     if "card_id" not in w or not _str_or_none(w["card_id"]):
@@ -172,15 +187,17 @@ def _check_base_snapshot(snap: dict[str, Any]) -> None:
 
     for pi, proj in enumerate(snap["projects"]):
         where = f"base snapshot projects[{pi}]"
-        if not isinstance(proj, dict) or not isinstance(proj.get("id"), str) or not proj["id"] or ":" in proj["id"] \
-                or not isinstance(proj.get("name"), str) or not isinstance(proj.get("cards"), list) \
+        if not isinstance(proj, dict) or not isinstance(proj.get("id"), str) \
+                or not BOARD_SLUG.fullmatch(proj["id"]) or not isinstance(proj.get("name"), str) or not isinstance(proj.get("cards"), list) \
                 or not isinstance(proj.get("epics"), list):
-            raise ValueError(f"{where} needs a board-slug id (no ':'), a string name, an epics list and a cards list")
+            raise ValueError(f"{where} needs a board-slug id (a-z, 0-9, '-' or '_'), a string name, an epics list and a cards list")
         fresh(where, proj["id"])
         epics: set[str] = set()
         for ei, ep in enumerate(proj["epics"]):
             if not isinstance(ep, dict) or not isinstance(ep.get("id"), str) or not isinstance(ep.get("title"), str):
                 raise ValueError(f"{where}.epics[{ei}] needs a string id and title")
+            if ep["id"].partition(":")[0] != proj["id"] or not ep["id"].partition(":")[2]:
+                raise ValueError(f"{where}.epics[{ei}]: epic id {ep['id']!r} is not '{proj['id']}:<id>'")
             fresh(f"{where}.epics[{ei}]", ep["id"])
             epics.add(ep["id"])
         for ci, card in enumerate(proj["cards"]):
@@ -192,6 +209,12 @@ def _check_base_snapshot(snap: dict[str, Any]) -> None:
     for wi, w in enumerate(snap["workers"]):
         _check_worker(f"base snapshot workers[{wi}]", w)
         fresh(f"base snapshot workers[{wi}]", w["id"])
+    derived = {w["id"]: w["card_id"] for w in apply_snapshot({**snap, "epoch": "validate", "last_seq": 0})
+               ["snapshot"]["workers"]}
+    for wi, w in enumerate(snap["workers"]):  # contract: the snapshot's worker card_id must match the derivation
+        if w["card_id"] != derived[w["id"]]:
+            raise ValueError(f"base snapshot workers[{wi}]: card_id {w['card_id']!r} does not match the cards that "
+                             f"claim {w['id']!r} (the derivation gives {derived[w['id']]!r})")
 
 
 def _check_lines(where: str, lines: Any, last: int) -> int:
@@ -202,6 +225,9 @@ def _check_lines(where: str, lines: Any, last: int) -> int:
         if not isinstance(ln, dict) or not _int(ln.get("seq")) or not isinstance(ln.get("text"), str) \
                 or not isinstance(ln.get("role"), str):
             raise ValueError(f"{where}[{i}]: a transcript line needs an int seq and string role and text")
+        if len(ln["text"]) > TRANSCRIPT_TEXT_MAX:
+            raise ValueError(f"{where}[{i}]: transcript text is {len(ln['text'])} characters; "
+                             f"the contract allows {TRANSCRIPT_TEXT_MAX}")
         if ln["role"] not in TRANSCRIPT_ROLES:
             raise ValueError(f"{where}[{i}]: transcript role must be one of {', '.join(TRANSCRIPT_ROLES)}")
         if ln["seq"] > MAX_SEQ:

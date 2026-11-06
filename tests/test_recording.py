@@ -343,6 +343,64 @@ def _transcript_bad_role(r):
     r["base"]["transcripts"]["fx:3"][0]["role"] = "wizard"
 
 
+# -- the contract's field, enum and mapping rules (round 3) -----------------------------------------------------
+def _card_no_blocked_on(r):
+    del _first_upsert(r)["payload"]["card"]["blocked_on"]
+
+
+def _base_card_no_blocked_on(r):
+    del _first_card(r)["blocked_on"]
+
+
+def _status_disagrees_with_native(r):
+    card = _first_upsert(r)["payload"]["card"]
+    card["status_native"], card["status"] = "done", "open"  # the reviewer's reproduction
+
+
+def _base_status_disagrees(r):
+    card = _first_card(r)
+    card["status_native"], card["status"] = "running", "done"
+
+
+def _unknown_native_with_a_known_status(r):
+    card = _first_upsert(r)["payload"]["card"]
+    card["status_native"], card["status"] = "wip", "running"  # must be "unknown"
+
+
+def _archived_card_in_an_upsert(r):
+    card = _first_upsert(r)["payload"]["card"]
+    card["status_native"], card["status"] = "archived", "unknown"
+
+
+def _archived_card_in_the_base(r):
+    card = _first_card(r)
+    card["status_native"], card["status"] = "archived", "unknown"
+
+
+def _epic_of_another_board(r):
+    r["base"]["snapshot"]["projects"][0]["epics"][0]["id"] = "harbor:e1"
+
+
+def _project_id_not_a_slug(r):
+    r["base"]["snapshot"]["projects"][0]["id"] = "Atlas API"
+
+
+def _worker_id_without_a_board(r):
+    r["base"]["snapshot"]["workers"][0]["id"] = "plain"
+
+
+def _worker_card_id_disagrees_with_claims(r):
+    r["base"]["snapshot"]["workers"][0]["card_id"] = "atlas:t01"  # that card is not claimed by this worker
+
+
+def _base_transcript_line_too_long(r):
+    r["base"]["transcripts"]["fx:3"][0]["text"] = "x" * 2001
+
+
+def _step_transcript_line_too_long(r):
+    next(ls for st in r["steps"] for ls in st["transcript"].values() if ls)[0]["text"] = "y" * 2001
+
+
 # -- timestamps and numbers that overflow --------------------------------------------------------------------
 def _claimed_card_year_one(r):
     card = _first_upsert(r)["payload"]["card"]
@@ -402,6 +460,19 @@ BAD_RECORDINGS = {
     "event-without-ts": (_event_no_ts, "ts"),
     "event-seq-beyond-the-cursor-range": (_event_seq_beyond_cursor_range, "above"),
     "transcript-bad-role": (_transcript_bad_role, "role"),
+    "card-without-blocked-on": (_card_no_blocked_on, "blocked_on"),
+    "base-card-without-blocked-on": (_base_card_no_blocked_on, "blocked_on"),
+    "status-disagrees-with-native": (_status_disagrees_with_native, "does not match status_native"),
+    "base-status-disagrees-with-native": (_base_status_disagrees, "does not match status_native"),
+    "unknown-native-with-a-known-status": (_unknown_native_with_a_known_status, "maps it to 'unknown'"),
+    "archived-card-in-an-upsert": (_archived_card_in_an_upsert, "archived"),
+    "archived-card-in-the-base": (_archived_card_in_the_base, "archived"),
+    "epic-of-another-board": (_epic_of_another_board, "epic id"),
+    "project-id-not-a-slug": (_project_id_not_a_slug, "board-slug"),
+    "worker-id-without-a-board": (_worker_id_without_a_board, "worker id"),
+    "worker-card-id-disagrees-with-claims": (_worker_card_id_disagrees_with_claims, "derivation"),
+    "base-transcript-line-too-long": (_base_transcript_line_too_long, "2001 characters"),
+    "step-transcript-line-too-long": (_step_transcript_line_too_long, "2001 characters"),
     "claimed-card-dated-year-one": (_claimed_card_year_one, "RFC3339"),
     "stamp-overflows-at-the-far-end": (_stamp_year_nine_thousand_far_offset, "RFC3339"),
     "stamp-is-not-a-stamp": (_stamp_not_a_stamp, "RFC3339"),
@@ -532,3 +603,31 @@ def test_a_reducer_overflow_is_normalised_even_if_the_schema_checks_miss_it(rec,
     monkeypatch.setattr(mod, "apply_events", boom)
     with pytest.raises(ValueError, match="does not replay: OverflowError"):
         validate_recording(copy.deepcopy(rec))
+
+
+def test_a_line_of_exactly_the_cap_is_served_whole_and_one_over_is_refused(rec):
+    ok = copy.deepcopy(rec)
+    ok["base"]["transcripts"]["fx:3"][0]["text"] = "z" * 2000
+    validate_recording(ok)
+    assert len(played(ok).transcript("fx:3", limit=200)["lines"][0]["text"]) == 2000
+    bad = copy.deepcopy(rec)
+    bad["base"]["transcripts"]["fx:3"][0]["text"] = "z" * 2001
+    with pytest.raises(ValueError, match="2001 characters"):
+        ReplaySource(bad)
+
+
+def test_every_served_transcript_line_is_within_the_cap(rec):
+    rp = played(rec)
+    for w in rp.snapshot()["workers"]:
+        assert all(len(ln["text"]) <= 2000 for ln in rp.transcript(w["id"], limit=200)["lines"])
+
+
+def test_a_native_status_outside_the_table_is_allowed_when_shown_as_unknown(rec):
+    ok = copy.deepcopy(rec)
+    card = _first_upsert(ok)["payload"]["card"]
+    card["status_native"], card["status"] = "wip", "unknown"
+    validate_recording(ok)
+    for native, shown in (("triage", "open"), ("todo", "open"), ("scheduled", "open"), ("ready", "open"),
+                          ("running", "running"), ("blocked", "blocked"), ("review", "review"), ("done", "done")):
+        card["status_native"], card["status"] = native, shown
+        validate_recording(ok)
