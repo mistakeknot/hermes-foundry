@@ -10,12 +10,15 @@ export function applySnapshot(snap: Snapshot, prev?: PaneState | null): PaneStat
 
 const RFC3339 = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}:\d{2})(?::(\d{2})(?:\.(\d+))?)?([Zz]|[+-]\d{2}:?\d{2})$/
 
+/** A UTC instant: whole epoch seconds plus the fraction digits exactly as written (any length). */
+export type Instant = { sec: bigint; frac: string }
+
 /**
- * Parse an RFC 3339 timestamp to a UTC instant in integer nanoseconds (BigInt), keeping up to nine
- * fraction digits (Date.parse would truncate to milliseconds). A string without an explicit offset, or
- * that does not parse, returns null and ranks oldest, so it never wins an ownership comparison.
+ * Parse an RFC 3339 timestamp to whole UTC seconds plus its fraction digits, of any length (Date.parse
+ * would truncate to milliseconds). A string without an explicit offset, or that does not parse, returns
+ * null and ranks oldest, so it never wins an ownership comparison.
  */
-export function instantOf(ts: string | null | undefined): bigint | null {
+export function parseInstant(ts: string | null | undefined): Instant | null {
   if (typeof ts !== 'string') return null
   const m = RFC3339.exec(ts)
   if (!m) return null
@@ -23,18 +26,32 @@ export function instantOf(ts: string | null | undefined): bigint | null {
   // whole seconds through Date.parse (offset handling), the fraction kept as a digit string
   const whole = Date.parse(`${date}T${hm}:${sec ?? '00'}${zone.length === 5 && !zone.includes(':') && zone !== 'Z' ? zone.slice(0, 3) + ':' + zone.slice(3) : zone}`)
   if (Number.isNaN(whole)) return null
-  const nanos = BigInt((frac ?? '').slice(0, 9).padEnd(9, '0'))
-  return BigInt(whole) * 1_000_000n + nanos
+  return { sec: BigInt(whole) / 1000n, frac: (frac ?? '').replace(/0+$/, '') }
 }
 
-/** True when card a outranks card b for ownership: later UTC instant, then the greater card id. */
+/** -1, 0 or 1: whole seconds first, then fractions right-padded to equal width (so .5 equals .500). */
+export function compareInstants(a: Instant, b: Instant): number {
+  if (a.sec !== b.sec) return a.sec < b.sec ? -1 : 1
+  const w = Math.max(a.frac.length, b.frac.length)
+  const fa = a.frac.padEnd(w, '0'), fb = b.frac.padEnd(w, '0')
+  return fa === fb ? 0 : fa < fb ? -1 : 1
+}
+
+/** Integer nanoseconds (fraction truncated to nine digits). For display and tests only; ordering uses compareInstants. */
+export function instantOf(ts: string | null | undefined): bigint | null {
+  const i = parseInstant(ts)
+  return i ? i.sec * 1_000_000_000n + BigInt(i.frac.slice(0, 9).padEnd(9, '0')) : null
+}
+
+/** True when card a outranks card b for ownership: later UTC instant (full precision), then the greater card id. */
 export function outranks(a: Card, b: Card): boolean {
-  const ta = instantOf(a.updated_at)
-  const tb = instantOf(b.updated_at)
-  if (ta === tb) return a.id > b.id // includes both unparseable
+  const ta = parseInstant(a.updated_at)
+  const tb = parseInstant(b.updated_at)
+  if (ta === null && tb === null) return a.id > b.id
   if (ta === null) return false
   if (tb === null) return true
-  return ta > tb
+  const c = compareInstants(ta, tb)
+  return c === 0 ? a.id > b.id : c > 0
 }
 
 /** A card whose claimed_by names a known worker that is not climbing this card: drawn as claimed, without a climber. */

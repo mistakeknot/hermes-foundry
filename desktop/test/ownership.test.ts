@@ -37,6 +37,15 @@ describe('ownership compares UTC instants, then the greatest card id', () => {
     // same instant with trailing zeros and another offset still ties, then the greatest id
     expect(holder([{ id: 'main:t1', at: '2026-11-07T11:00:00.000900+02:00' }, { id: 'main:t9', at: '2026-11-07T09:00:00.0009Z' }])).toBe('main:t9')
   })
+  it('fractions longer than nine digits still order (no truncation)', () => {
+    expect(holder([{ id: 'main:t9', at: '2026-11-07T09:00:00.1234567891Z' }, { id: 'main:t1', at: '2026-11-07T09:00:00.1234567899Z' }])).toBe('main:t1')
+    expect(holder([{ id: 'main:t1', at: '2026-11-07T09:00:00.1234567899Z' }, { id: 'main:t9', at: '2026-11-07T09:00:00.1234567891Z' }])).toBe('main:t1')
+    // a 12-digit difference past the ninth digit, and a short fraction against a longer one
+    expect(holder([{ id: 'main:t9', at: '2026-11-07T09:00:00.123456789000Z' }, { id: 'main:t1', at: '2026-11-07T09:00:00.123456789001Z' }])).toBe('main:t1')
+    expect(holder([{ id: 'main:t1', at: '2026-11-07T09:00:00.5Z' }, { id: 'main:t9', at: '2026-11-07T09:00:00.50000000000001Z' }])).toBe('main:t9')
+    // genuinely equal (trailing zeros past any width): the greatest id wins
+    expect(holder([{ id: 'main:t1', at: '2026-11-07T09:00:00.5000000000000Z' }, { id: 'main:t9', at: '2026-11-07T09:00:00.5Z' }])).toBe('main:t9')
+  })
   it('a newer card with a smaller id beats an older card with a greater id', () => {
     expect(holder([{ id: 'main:t9', at: '2026-11-07T09:00:00Z' }, { id: 'main:t1', at: '2026-11-07T09:00:01Z' }])).toBe('main:t1')
   })
