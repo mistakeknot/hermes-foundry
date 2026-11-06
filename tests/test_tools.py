@@ -174,3 +174,11 @@ def test_plugin_register_never_raises(monkeypatch):
     mod.register(ctx)
     assert [c["name"] for c in ctx.calls] == ["foundry_assign", "foundry_stand", "foundry_message"]
     mod.register(object())  # a context without register_tool: logged, not raised
+
+
+def test_replay_source_refuses_every_tool_and_is_marked_simulated():
+    from foundry_core.service import make_source
+    t = FoundryTools(make=lambda: make_source({"FOUNDRY_REPLAY": "1"}))
+    for out in (_out(t.assign({"card_id": "a:1", "profile": "coder"})), _out(t.stand({"on": True})),
+                _out(t.message({"worker_id": "fx:1", "text": "hi"}))):
+        assert out["ok"] is False and out["error"] and out["simulated"] is True
