@@ -20,7 +20,7 @@ export const STATUS_COLOR: Record<Card['status'], number> = {
 export const WORKER_COLOR: Record<Worker['state'], number> = {
   working: 0xffd36a, waiting_human: 0x6fd3ff, looping: 0xff6fa8, idle: 0xb9b2a0, unknown: 0xa6a6a6,
 }
-const MATERIAL_COLOR: Record<Material, number> = { stone: 0x77726a, lichen: 0x6d8650, coral: 0xc8735c }
+const MATERIAL_COLOR: Record<Material, number> = { stone: 0xc2bcac, lichen: 0xa6c74c, coral: 0xf0714f }
 
 export type Pick =
   | { kind: 'card'; id: string }
@@ -111,10 +111,10 @@ export class FoundryScene {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true })
     this.renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2))
     this.renderer.shadowMap.enabled = false
-    this.scene.background = new THREE.Color(0x1d2622)
-    this.scene.fog = new THREE.FogExp2(0x1d2622, 0.011)
-    this.scene.add(new THREE.HemisphereLight(0xcfe3d4, 0x2a2219, 1.15))
-    const sun = new THREE.DirectionalLight(0xffe2b8, 2.4)
+    this.scene.background = new THREE.Color(0x0c1210)
+    this.scene.fog = new THREE.FogExp2(0x0c1210, 0.015)
+    this.scene.add(new THREE.HemisphereLight(0xa9c4cc, 0x120e0a, 0.8))
+    const sun = new THREE.DirectionalLight(0xffd9a6, 3.0)
     sun.position.set(30, 45, 20)
     this.scene.add(sun)
     this.buildValley()
@@ -159,7 +159,7 @@ export class FoundryScene {
       const h = bowl * bowl * 22 + Math.sin(x * 0.11 + ph[0]) * 1.1 + Math.cos(z * 0.13 + ph[1]) * 1.0 + Math.sin((x + z) * 0.31 + ph[2]) * 0.35
       pos.setY(i, h - 1.2)
       const t = Math.min(1, Math.max(0, h / 14))
-      c.setHex(0x5d7345).lerp(new THREE.Color(0x77726a), t) // lichen floor to bare stone on the rim
+      c.setHex(0x3a4a2d).lerp(new THREE.Color(0x4d4c46), t) // lichen floor to bare stone on the rim
       const n = (Math.sin(x * 1.7) * Math.cos(z * 1.9) + 1) * 0.04
       col[i * 3] = c.r * (0.9 + n); col[i * 3 + 1] = c.g * (0.9 + n); col[i * 3 + 2] = c.b * (0.9 + n)
     }
@@ -170,7 +170,7 @@ export class FoundryScene {
     // scattered boulders and coral-like tufts
     const rr = rng(99)
     const rockGeo = new THREE.IcosahedronGeometry(1, 0)
-    const rocks = new THREE.InstancedMesh(rockGeo, new THREE.MeshStandardMaterial({ color: 0x6e6a62, flatShading: true, roughness: 1 }), 70)
+    const rocks = new THREE.InstancedMesh(rockGeo, new THREE.MeshStandardMaterial({ color: 0x3b3a36, flatShading: true, roughness: 1 }), 70)
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
     for (let i = 0; i < 70; i++) {
       const a = rr() * 6.283, d = 14 + rr() * 38

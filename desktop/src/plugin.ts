@@ -142,8 +142,10 @@ function FoundryPage({ rest }: { rest: Rest }) {
         h('i', { style: { width: 9, height: 9, borderRadius: 2, background: hex(STATUS_COLOR[k]), display: 'inline-block' } }), `${k} ${counts[k]}`)),
       counts.unknown ? h('span', { style: { display: 'inline-flex', gap: 4, alignItems: 'center' } }, h('i', { style: { width: 9, height: 9, borderRadius: 2, background: hex(STATUS_COLOR.unknown), display: 'inline-block' } }), `other ${counts.unknown}`) : null))
 
-  const stage = h('div', { ref: hostRef, style: { position: 'relative', flex: 1, minWidth: 0, background: '#1d2622', overflow: 'hidden' } },
+  const stage = h('div', { ref: hostRef, style: { position: 'relative', flex: 1, minWidth: 0, background: '#0c1210', overflow: 'hidden' } },
     h('canvas', { ref: canvasRef, style: { position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', cursor: 'grab' } }),
+    // valley frame: darkens the edges so the dark scene sits in the pane instead of floating in bright chrome
+    h('div', { id: 'foundry-vignette', style: { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'radial-gradient(ellipse at 50% 55%, rgba(8,12,11,0) 52%, rgba(8,12,11,0.55) 80%, rgba(8,12,11,0.9) 100%)' } }),
     h('div', { ref: labelsRef, style: { position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' } }),
     header,
     tip ? h('div', { style: { position: 'absolute', left: tip.x, top: tip.y, background: C.card, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '3px 8px', font: `11px ${sans}`, pointerEvents: 'none', maxWidth: 280 } }, tip.label) : null,
