@@ -33,27 +33,27 @@ A second adapter that reads beads and Citadel is the GSV bonus. It ships only if
 ## Architecture
 1. **Python plugin** (`register(ctx)`, plugin.yaml):
    - **Hooks:** kanban_task_claimed/completed/blocked, the session start/end/finalize hooks, pre_tool_call and post_tool_call.
-   - **Event store:** the hooks write a factory event log to plugin_db.
+   - **State:** the kanban stays the source of truth. The pane initializes from a board snapshot and follows the events cursor (or a bounded snapshot refresh); the hook log only adds worker and session signals. Stable IDs, ordering, dedup and resync on reconnect are defined once in a reducer that the fixture also uses.
    - **Tools:** `foundry_assign`, `foundry_stand` and `foundry_message`, which wrap the existing kanban, delegation and session actions.
-   - **Feed:** a small local event feed (SSE or websocket) for the pane.
+   - **Feed:** prefer the existing authenticated desktop transport (socket invalidation plus cursor). Only if that is unusable, prove one own transport end to end on Nov 7. Live and fixture commands stay separate; a failed command is shown before any displayed state changes.
 2. **Desktop JS pane:**
    - three.js scene.
    - Procedural creature builder: a deterministic seed from the project id, so the same project always looks the same.
    - Instanced scales, orbit and zoom only.
    - Side panel for cards, docs and transcripts.
-3. **Fixture:** a recorded factory session (3 projects, about 40 cards, 4 workers, one loop, one blocked card waiting on a human). It replays through the same feed, so the demo never depends on live model output.
+3. **Fixture (revised):** a deterministic state machine, not a timed recording. It sits behind the same command and feed interface as live Hermes, has a reset and an explicit demo mode, and every storyboard action (answer a blocked card, assign a worker, stand) gets a scripted response with no model calls or credentials. Simulated execution is labelled as such. Seed data: a recorded factory session (3 projects, about 40 cards, 4 workers, one loop, one blocked card waiting on a human). It replays through the same feed, so the demo never depends on live model output.
 
-## Day plan
-- **Nov 7:**
-  - Confirm the Hermes desktop pane API and the kanban hooks against the real Hermes source (unverified today).
-  - Plugin skeleton, event log, fixture recorder.
-  - Static creature from one board.
-- **Nov 8:** valley view, statuses, climbers driven by fixture events, and click-to-open card and doc.
-- **Nov 9:** drag-to-assign and delegate, message a climber, "stand", the loop-slip check.
-- **Nov 10:**
-  - Polish: art direction (original look, e.g. stone, lichen and coral; no recreation of an existing game).
-  - Sound cue on slip and stand, performance pass, README, catalog PR draft.
-- **Nov 11 AM:** 90s video from the fixture, plus one live take.
+## Day plan (revision 1, after cross-lab plan review)
+- **Nov 7 (gate day):**
+  - Morning: lock the minimal normalized schema (project, epic or "ungrouped" limb, card, status, doc link, worker, worker state) and map every field to a verified Hermes source. Omit a worker state the source cannot give; never infer it silently.
+  - Plugin skeleton, shared reducer, fixture state machine (see Architecture).
+  - **Afternoon integration gate:** install the packaged plugin on a stock Hermes with a clean `HERMES_HOME`, no API keys, no developer checkout. Render bundled three.js on `/foundry`, read one card, change its status from the pane, and see the update come back. If cross-plugin REST or CSP fails, pick the fallback (own Python router and/or local page) that same afternoon and re-run the gate.
+  - Also settle by end of day: the supported Hermes version, and the exact install, restart and open-demo commands.
+  - Also decide: can "stand" (cooperative pause at the next tool boundary, delegated sessions included) be proven? If not by end of Nov 7, it leaves the required demo.
+- **Nov 8:** valley view, statuses, climbers driven by the fixture state machine, click a scale to open card and doc, assign and status buttons working on both fixture and live Hermes.
+- **Nov 9 (feature freeze at end of day):** message a climber, delegate ("+ new climber"), drag gesture (optional), then optional items in cut order. Clean-home install rehearsal on the fixture.
+- **Nov 10 (verify and record):** timed interaction checklist against the 2D board, art direction (original look: stone, lichen, coral), performance pass, README, catalog PR draft, record the full 90s video and one live take. Nothing new ships after Nov 9.
+- **Nov 11 AM:** only mk's submission steps (catalog PR, X post, entry form) and a re-record if the Nov 10 take failed.
 
 ## Demo storyboard (90s)
 - **0-10s:** pull back over a valley of creatures. Caption: "your software factory".
@@ -86,8 +86,13 @@ A second adapter that reads beads and Citadel is the GSV bonus. It ships only if
 ## Risks
 - **Cross-plugin REST access and CSP for three.js are unverified.** Fallback: Foundry's own Python router proxies the kanban calls; serve the scene as a local web page opened from a slash command.
 - **Legibility past about 100 cards.** Show scales only on zoom; group by epic.
-- **Scope.** Cut in this order: the beads adapter, then "stand", then the slip check. Never cut click-to-open or drag-to-assign.
+- **Scope. Cut in this order:** the beads adapter (cut now), sound, the slip check, "stand" (unless proven Nov 7), live message and delegation, then the drag gesture. Never cut: click-to-open, and assign and status via buttons. Dragging is polish.
+- **"Stand" must not overclaim.** It pauses at the next tool boundary and never claims to cancel a tool call already running.
+- **Acceptance:** a small timed checklist (open a card, change a status, assign a worker, each at least as fast as the 2D board) and a clean-install fixture rehearsal on Nov 9 and again on Nov 10. Live execution is optional.
 
 ## Gates (unchanged)
 - The code goes in a new private repo first. Making it public, the catalog PR, the X post and the entry form are all mk's.
 - Cross-lab review of this plan before executors start (the reviewer independence rule).
+
+## Revision log
+- Rev 1 (Nov 6, PST): applied the cross-lab plan review (Astra, REVISE, 9 findings): Day-1 integration gate, state-machine fixture, install spec on day 1, cut order, "stand" proof-or-remove, normalized schema, kanban as source of truth, transport choice, feature freeze on Nov 9.
