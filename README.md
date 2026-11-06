@@ -18,6 +18,11 @@ built from `desktop/src/plugin.ts` only:
 `desktop/src/probe.ts` is a development-only integration probe. It is not imported by
 `plugin.ts` and is not in the product bundle.
 
+Dragging a climber onto a scale only opens that card's profile selector, the same one the Assign button uses.
+It never claims the card and never infers a profile from the worker; you still pick a profile and press Assign,
+which sends `assign` only. A drop on anything else (empty space, a carving, a creature body, another climber) does
+nothing, and leaving the canvas mid-drag cancels it. Fixture and live behave the same.
+
 ### Enabling the pane (desktop half is opt-in)
 
 `hermes plugins enable foundry` turns on the agent half (the router). The desktop half is opt-in:

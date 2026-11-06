@@ -8,6 +8,7 @@ import { HttpApi, probeRouter, type Rest } from './http'
 import { MockApi, PROFILES } from './mock'
 import { startSync, type SyncHandle } from './sync'
 import { findCard } from './reducer'
+import { dropUi, type AssignRequest } from './drag'
 import type { Card, Command, FoundryApi, PaneState, TranscriptReply, Worker } from './types'
 
 type Child = unknown
@@ -57,6 +58,9 @@ function FoundryPage({ rest }: { rest: Rest }) {
   const [tip, setTip] = useState<{ label: string; x: number; y: number } | null>(null)
   const [notice, setNotice] = useState<{ text: string; err: boolean; sim: boolean } | null>(null)
   const [webgl, setWebgl] = useState(true)
+  // set by dropping a climber on a scale: opens that card's profile selector. Carries no profile and no command.
+  const [assignReq, setAssignReq] = useState<AssignRequest | null>(null)
+  const snapRef = useRef<PaneState['snap'] | null>(null)
 
   // pick the source once: our router if it answers, otherwise the in-pane fixture
   useEffect(() => { let off = false; pickApi(rest).then((a) => { if (!off) setApi(a) }); return () => { off = true } }, [])
@@ -80,6 +84,15 @@ function FoundryPage({ rest }: { rest: Rest }) {
           const r = host.getBoundingClientRect()
           setTip(label ? { label, x: x - r.left + 12, y: y - r.top + 12 } : null)
         },
+        onDrop: (req) => {
+          const sn = snapRef.current
+          const ui = sn ? dropUi(req, sn) : null
+          if (!ui) return
+          setTip(null)
+          setPick(ui.pick)
+          setAssignReq(ui.request)
+          setNotice({ text: ui.notice, err: false, sim: false })
+        },
       })
     } catch { setWebgl(false); return }
     sceneRef.current = scene
@@ -92,6 +105,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
   }, [])
 
   const snap = state?.snap ?? null
+  snapRef.current = snap
   useEffect(() => { if (snap) sceneRef.current?.update(snap) }, [snap])
   useEffect(() => {
     const s = sceneRef.current
@@ -137,7 +151,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
     h('div', { style: { position: 'absolute', left: 12, bottom: 10, font: `11px ${sans}`, color: ON_DARK_MUTED, textShadow: '0 1px 3px #000', pointerEvents: 'none' } }, 'drag to orbit · scroll to zoom · click a scale, carving or climber · double-click a creature to approach'))
 
   const panel = h('div', { id: 'foundry-panel', style: { width: 330, flex: 'none', borderLeft: `1px solid ${C.border}`, background: C.card, color: C.fg, font: `13px ${sans}`, overflowY: 'auto', padding: '12px 14px' } },
-    snap ? Panel({ snap, state: state!, pick, setPick, run, notice, simulated, api: api!, scene: sceneRef }) : null)
+    snap ? Panel({ snap, state: state!, pick, setPick, run, notice, simulated, api: api!, scene: sceneRef, assignReq, clearAssignReq: () => setAssignReq(null) }) : null)
 
   return h('div', { style: { display: 'flex', height: '100%', width: '100%', background: C.bg } }, stage, panel)
 }
@@ -146,6 +160,7 @@ interface PanelProps {
   snap: NonNullable<PaneState['snap']>; state: PaneState; pick: Pick | null; setPick(p: Pick | null): void
   run(c: Command, ok: string): Promise<boolean>; notice: { text: string; err: boolean; sim: boolean } | null
   simulated: boolean; api: FoundryApi; scene: { current: FoundryScene | null }
+  assignReq: AssignRequest | null; clearAssignReq(): void
 }
 
 function Panel(p: PanelProps) {
@@ -197,6 +212,14 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null }) 
   const [status, setStatus] = useState(card.status_native)
   const [profile, setProfile] = useState(card.assignee_profile ?? '')
   const [text, setText] = useState('')
+  const profileRef = useRef<HTMLInputElement>(null)
+  // a climber dropped on this card: focus the same profile field the Assign button uses, then forget the request
+  useEffect(() => {
+    const r = p.assignReq
+    if (!r || r.cardId !== card.id) return
+    profileRef.current?.focus()
+    p.clearAssignReq()
+  }, [p.assignReq, card.id])
   useEffect(() => { setStatus(card.status_native); setProfile(card.assignee_profile ?? '') }, [card.id, card.status_native, card.assignee_profile])
   const profiles = useMemo(() => {
     const s = new Set<string>(p.simulated ? PROFILES : [])
@@ -223,7 +246,7 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null }) 
       h('button', { id: 'foundry-status-apply', style: btn(true), disabled: status === card.status_native, onClick: () => p.run({ type: 'set_status', card_id: card.id, status_native: status }, `Moved to ${status}`) }, 'Set status')),
     sect('Assign profile'),
     h('div', { style: row },
-      h('input', { id: 'foundry-profile', list: 'foundry-profiles', style: { ...field, flex: 1 }, value: profile, placeholder: 'profile', onChange: (e: any) => setProfile(e.target.value) }),
+      h('input', { id: 'foundry-profile', ref: profileRef, list: 'foundry-profiles', style: { ...field, flex: 1 }, value: profile, placeholder: 'profile', onChange: (e: any) => setProfile(e.target.value) }),
       h('datalist', { id: 'foundry-profiles' }, ...profiles.map((n) => h('option', { key: n, value: n }))),
       h('button', { id: 'foundry-assign', style: btn(true), disabled: !profile.trim() || profile === card.assignee_profile, onClick: () => p.run({ type: 'assign', card_id: card.id, profile: profile.trim() }, `Assigned to ${profile.trim()} (does not start work)`) }, 'Assign')),
     sect('Comment'),
