@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import secrets
 from typing import Any
@@ -28,10 +29,13 @@ def make_source(env: dict[str, str] | None = None) -> Any:
     replay = env.get("FOUNDRY_REPLAY", "").strip()
     if replay:  # optional ambient demo: plays the bundled (or named) recorded session on the wall clock
         from .recording import ReplaySource, load
+        raw_step = env.get("FOUNDRY_REPLAY_STEP_SECONDS", "2.0")
         try:
-            step = float(env.get("FOUNDRY_REPLAY_STEP_SECONDS", "2.0"))
+            step = float(raw_step)
         except ValueError as exc:
             raise RuntimeError(f"FOUNDRY_REPLAY_STEP_SECONDS is not a number: {exc}") from exc
+        if not math.isfinite(step) or step <= 0:
+            raise RuntimeError(f"FOUNDRY_REPLAY_STEP_SECONDS must be a finite number above 0, got {raw_step!r}")
         path = None if replay.lower() in ("1", "true", "yes", "bundled") else replay
         try:
             return ReplaySource(load(path), step_seconds=step, epoch_prefix="rp" + secrets.token_hex(3))
