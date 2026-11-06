@@ -29,7 +29,7 @@ A second adapter that reads beads and Citadel is the GSV bonus. Proposed: cut no
   - Click a scale and its card opens in a side panel, where you can comment and change status.
   - Assign a card to a profile with a button. This is a profile assignment (`assign_task`), not a claim: the card's claimant (the worker that holds it) is shown separately and is never inferred from the profile.
 - **Operating from the scene (optional, in cut order):**
-  - Drag a climber onto a scale (a gesture for the assign button).
+  - Drag a climber onto a scale. This only opens the same profile selector as the assign button (a worker exposes no profile, so the profile is never inferred from the worker); it does not claim the card.
   - Click a climber to see its name, state and held card; a bounded transcript and "send a message" only if the live source supports them (see docs/contract.md, Transcripts). Fixture mode simulates them, labelled.
   - "+ new climber" (launch a worker) and "stand" (pause at the next tool boundary) are fixture-simulated unless proven on stock Hermes; no launch call has been found yet.
 - **The 2D board stays one keystroke away.** Every action must be at least as fast as the board, or the 3D view is a gimmick.
@@ -39,7 +39,7 @@ A second adapter that reads beads and Citadel is the GSV bonus. Proposed: cut no
    - **Hooks:** kanban_task_claimed/completed/blocked, the session start/end/finalize hooks, pre_tool_call and post_tool_call.
    - **State:** the kanban stays the source of truth. The pane initializes from a board snapshot and follows the events cursor (or a bounded snapshot refresh); the hook log only adds worker and session signals. Stable IDs, ordering, dedup and resync on reconnect are defined once in a reducer that the fixture also uses.
    - **Tools (proposed):** `foundry_assign` wraps profile assignment and is part of the floor. `foundry_stand` and `foundry_message` are conditional: they exist only if a matching Hermes action is found and proven on stock Hermes; otherwise they are fixture-only and labelled simulated.
-   - **Feed:** Foundry's own router under `/api/plugins/foundry` with an events cursor, polled by the pane. The desktop socket is a no-op on OAuth remotes and one plugin's REST cannot reach another's, so push is at most a poll accelerator. Authentication is whatever the Hermes plugin router already enforces; the local-page fallback must not weaken it and is only used if it keeps the same authenticated origin. Live and fixture commands stay separate; a failed command is shown before any displayed state changes.
+   - **Feed:** Foundry's own router under `/api/plugins/foundry` with an events cursor, polled by the pane. Exec A's reading of the Hermes SDK source (not yet proven at runtime, see "Source-read" below) is that the desktop socket does nothing on OAuth remotes and that the pane cannot reach another plugin's REST through `ctx.rest`; so Foundry's Python router, which runs server-side and may reuse the kanban code directly, serves the pane, and push is at most a poll accelerator. Authentication is whatever the Hermes plugin router already enforces; the local-page fallback must not weaken it and is only used if it keeps the same authenticated origin. Live and fixture commands stay separate; a failed command is shown before any displayed state changes.
 2. **Desktop JS pane:**
    - three.js scene.
    - Procedural creature builder: a deterministic seed from the project id, so the same project always looks the same.
@@ -103,6 +103,7 @@ Optional beats, each replacing one floor beat only if it is kept (and shown as s
 - Cross-lab review of this plan before executors start (the reviewer independence rule).
 
 ## Revision log
+- Rev 4 (Nov 6, PST): answered the third cross-lab review (3 findings): ownership cardinality and worker-removal rules with reducer vectors, drag opens a profile selector (no inferred profile), transport sentence in Architecture qualified as a source reading and pane-side vs server-side distinguished.
 - Rev 3 (Nov 6, PST): answered the second cross-lab review (7 findings): storyboard no longer implies assignment is a claim or that comments resume a worker; contract made implementable (last_seq, upsert/remove events, ownership invariant, id and status rules); transport claims marked as source-read assumptions with the authenticated-origin condition repeated; stand/message tools and Nov 9 tasks made conditional.
 - Rev 2 (Nov 6, PST): answered the cross-lab PR review of rev 1 (7 findings): delegation evidence corrected, profile assignment separated from claim ownership, contract made implementable (global ids, event payloads, cursor and epoch rules, native-status mapping, live vs fixture-only commands, transcript endpoint or cut), proposal banner on the contract, floor storyboard independent of optional cuts, beads adapter scope made consistent.
 - Rev 1 (Nov 6, PST): applied the cross-lab plan review (Astra, REVISE, 9 findings): Day-1 integration gate, state-machine fixture, install spec on day 1, cut order, "stand" proof-or-remove, normalized schema, kanban as source of truth, transport choice, feature freeze on Nov 9.
