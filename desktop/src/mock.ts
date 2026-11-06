@@ -1,6 +1,7 @@
 // In-pane mock of the router, used until the Python side lands and as the "simulated" demo mode.
 // Deterministic: same script, same order, no model calls, no credentials.
 import { rng } from './rng'
+import { recomputeWorkers } from './reducer'
 import type {
   Card, Command, CommandReply, EventsReply, FoundryApi, FoundryEvent, Project, Snapshot, TranscriptReply, Worker,
 } from './types'
@@ -71,7 +72,7 @@ export class MockApi implements FoundryApi {
   private epochN = 1
   private tick = 0
   private lastStep = 0
-  constructor(private now: () => number = Date.now, private stepMs = 3000, private scale = 1) {
+  constructor(private now: () => number = Date.now, private stepMs = 3000, private scale = 1, private logMax = 500) {
     this.snap = buildFixture(this.scale)
     this.lastStep = now()
   }
@@ -89,6 +90,10 @@ export class MockApi implements FoundryApi {
     if (epoch !== this.snap.epoch) return { v: 1, epoch: this.snap.epoch, cursor: cur, events: [], resync: true }
     const since = Number(cursor.split('.').pop())
     if (!Number.isFinite(since)) return { v: 1, epoch: this.snap.epoch, cursor: cur, events: [], resync: true }
+    // the oldest retained event must be the one right after `since`; otherwise the cursor has expired
+    const oldest = this.log.length ? this.log[0].seq : this.seq + 1
+    if (since < this.seq && oldest > since + 1) return { v: 1, epoch: this.snap.epoch, cursor: cur, events: [], resync: true }
+    if (since > this.seq) return { v: 1, epoch: this.snap.epoch, cursor: cur, events: [], resync: true }
     return { v: 1, epoch: this.snap.epoch, cursor: cur, events: this.log.filter((e) => e.seq > since), resync: false }
   }
 
@@ -161,6 +166,7 @@ export class MockApi implements FoundryApi {
   private emit(e: { type: FoundryEvent['type']; payload: unknown }) {
     const ev = { seq: ++this.seq, ts: this.iso(), type: e.type, payload: e.payload } as FoundryEvent
     this.log.push(ev)
+    if (this.log.length > this.logMax) this.log.splice(0, this.log.length - this.logMax)
     switch (ev.type) {
       case 'card_upsert': {
         const proj = this.snap.projects.find((p) => p.id === ev.payload.card.id.split(':')[0])!
@@ -176,10 +182,7 @@ export class MockApi implements FoundryApi {
       case 'paused': this.snap.paused = ev.payload.paused; break
       default: break
     }
-    // keep workers' card_id derived from claimed_by, as the reducer does
-    const held = new Map<string, string>()
-    for (const p of this.snap.projects) for (const c of p.cards) if (c.claimed_by) held.set(c.claimed_by, c.id)
-    for (const w of this.snap.workers) w.card_id = held.get(w.id) ?? null
+    recomputeWorkers(this.snap) // the same ownership derivation the reducer uses
   }
   private advance() {
     const t = this.now()

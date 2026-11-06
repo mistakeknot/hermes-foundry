@@ -1,3 +1,6 @@
+// DEVELOPMENT ONLY. Never imported by src/plugin.ts and never part of desktop/plugin.js
+// (the product bundle is built from src/plugin.ts alone; build this one explicitly with
+// `node scripts/build.mjs src/probe.ts <out>` when you need it).
 // Nov 7 integration-gate probe. Not the product: proves (1) the runtime bundle loads,
 // (2) three.js renders under the desktop's CSP, (3) what ctx.rest can reach.
 import { jsx, jsxs } from 'react/jsx-runtime'

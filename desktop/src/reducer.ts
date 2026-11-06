@@ -1,20 +1,41 @@
 // Pure reducer: applySnapshot / applyEvent (contract draft 3). No I/O, no clock, no mutation of inputs.
 import type { Card, EventsReply, FoundryEvent, PaneState, Snapshot, Worker } from './types'
 
-export function applySnapshot(snap: Snapshot): PaneState {
+/** `prev` carries comments across a refresh within the same epoch (a snapshot does not hold comments). */
+export function applySnapshot(snap: Snapshot, prev?: PaneState | null): PaneState {
   const s = structuredClone(snap)
-  return { snap: recomputeWorkers(s), watermark: s.last_seq, cursor: s.cursor, epoch: s.epoch, comments: [] }
+  const comments = prev && prev.epoch === s.epoch ? prev.comments : []
+  return { snap: recomputeWorkers(s), watermark: s.last_seq, cursor: s.cursor, epoch: s.epoch, comments }
 }
 
-/** claimed_by on a card is the single source; a worker's card_id is derived from it. */
+/**
+ * Parse an RFC 3339 timestamp to epoch milliseconds. A string without an explicit offset (or that
+ * does not parse) is unparseable and ranks oldest, so it never wins an ownership comparison.
+ */
+export function instantOf(ts: string | null | undefined): number {
+  if (typeof ts !== 'string' || !/^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?([Zz]|[+-]\d{2}:?\d{2})$/.test(ts)) return -Infinity
+  const ms = Date.parse(ts.replace(' ', 'T'))
+  return Number.isNaN(ms) ? -Infinity : ms
+}
+
+/** True when card a outranks card b for ownership: later UTC instant, then the greater card id. */
+export function outranks(a: Card, b: Card): boolean {
+  const ta = instantOf(a.updated_at)
+  const tb = instantOf(b.updated_at)
+  return ta > tb || (ta === tb && a.id > b.id)
+}
+
+/**
+ * claimed_by is the single source (contract draft 4). A worker holds at most one card: the one with the
+ * latest updated_at instant (ties: the greatest card id). Other claims stay on their cards. Mutates
+ * and returns `s`; the mock fixture uses this same function.
+ */
 export function recomputeWorkers(s: Snapshot): Snapshot {
-  // claimed_by is the single source (contract draft 4). A worker holds at most one card: the one
-  // with the latest updated_at (ties: the greatest card id). Other claims stay on their cards.
   const held = new Map<string, Card>()
   for (const p of s.projects) for (const c of p.cards) {
     if (!c.claimed_by) continue
     const cur = held.get(c.claimed_by)
-    if (!cur || c.updated_at > cur.updated_at || (c.updated_at === cur.updated_at && c.id > cur.id)) held.set(c.claimed_by, c)
+    if (!cur || outranks(c, cur)) held.set(c.claimed_by, c)
   }
   for (const w of s.workers) w.card_id = held.get(w.id)?.id ?? null
   return s
@@ -61,7 +82,7 @@ export function applyEvent(state: PaneState, ev: FoundryEvent): PaneState | null
       break
     }
     case 'comment_added':
-      comments = [...comments, { ...ev.payload, seq: ev.seq }].slice(-200)
+      if (!comments.some((c) => c.seq === ev.seq)) comments = [...comments, { ...ev.payload, seq: ev.seq }].slice(-200)
       break
     case 'worker_upsert': {
       const w: Worker = ev.payload.worker

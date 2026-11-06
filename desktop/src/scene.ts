@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildCreature, frameAt, layoutCreatures, type CreatureSpec, type LimbSpec, type Material, type V3 } from './creature'
 import { hashString, rng } from './rng'
-import type { Card, Snapshot, Worker } from './types'
+import type { Card, Project, Snapshot, Worker } from './types'
 
 export const STATUS_COLOR: Record<Card['status'], number> = {
   open: 0xd2c9ae, // bone
@@ -166,6 +166,7 @@ export class FoundryScene {
 
   // ---------------- data ----------------
   update(snap: Snapshot) {
+    if (this.disposed) return
     this.snap = snap
     this.totalCards = snap.projects.reduce((n, p) => n + p.cards.length, 0)
     const specs = snap.projects.map(buildCreature)
@@ -174,7 +175,8 @@ export class FoundryScene {
     specs.forEach((spec, i) => {
       seen.add(spec.projectId)
       const proj = snap.projects[i]
-      const key = JSON.stringify([proj.epics.map((e) => e.id), proj.cards.map((c) => [c.id, c.epic_id, c.docs.map((d) => d.path)])])
+      // Everything the cached spec (labels, aggregate bands, tooltips, carvings) is derived from.
+      const key = creatureKey(proj)
       let v = this.creatures.get(spec.projectId)
       if (!v || v.key !== key) {
         if (v) this.disposeCreature(v)
@@ -332,13 +334,12 @@ export class FoundryScene {
 
   private disposeCreature(v: CreatureView) {
     this.scene.remove(v.group)
-    v.group.traverse((o) => { const m = o as THREE.Mesh; m.geometry?.dispose?.() })
+    disposeTree(v.group)
     v.labels.forEach((l) => l.el.remove())
-    v.scales.dispose()
   }
 
   private updateBeacons(snap: Snapshot) {
-    for (const b of this.beacons) { this.scene.remove(b.mesh); b.mesh.geometry.dispose() }
+    for (const b of this.beacons) { this.scene.remove(b.mesh); disposeTree(b.mesh) }
     this.beacons = []
     for (const p of snap.projects) for (const c of p.cards) {
       if (c.blocked_on !== 'human') continue
@@ -391,7 +392,7 @@ export class FoundryScene {
       mat.opacity = w.state === 'unknown' ? 0.55 : 1; mat.transparent = w.state === 'unknown'
       c.ring.visible = w.state === 'waiting_human'
     }
-    for (const [id, c] of this.climbers) if (!live.has(id)) { this.scene.remove(c.mesh); this.climbers.delete(id) }
+    for (const [id, c] of this.climbers) if (!live.has(id)) { this.scene.remove(c.mesh); disposeTree(c.mesh); this.climbers.delete(id) }
   }
 
   /** Idle climbers rest at the base of a creature chosen from the worker id. */
@@ -548,11 +549,42 @@ export class FoundryScene {
     this.canvas.removeEventListener('dblclick', this.onDbl)
     this.controls.dispose()
     for (const v of this.creatures.values()) this.disposeCreature(v)
+    this.creatures.clear()
+    for (const b of this.beacons) { this.scene.remove(b.mesh); disposeTree(b.mesh) }
+    this.beacons = []
+    for (const c of this.climbers.values()) { this.scene.remove(c.mesh); disposeTree(c.mesh) }
+    this.climbers.clear()
+    // valley, selection ring and anything else still attached to the scene
+    disposeTree(this.scene)
+    this.scene.clear()
     this.renderer.dispose()
+    this.renderer.forceContextLoss()
   }
 }
 
 // ---------------- geometry helpers ----------------
+/** Cache key for a creature: changes whenever anything its cached spec, labels or bands show changes. */
+export function creatureKey(p: Project): string {
+  return JSON.stringify([
+    p.name,
+    p.epics.map((e) => [e.id, e.title]),
+    p.cards.map((c) => [c.id, c.title, c.epic_id, c.status, c.docs.map((d) => [d.path, d.title])]),
+  ])
+}
+
+/** Dispose every geometry, material and instanced resource under `root` (shared ones are safe to dispose twice). */
+export function disposeTree(root: THREE.Object3D) {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh
+    m.geometry?.dispose?.()
+    const mat = m.material as THREE.Material | THREE.Material[] | undefined
+    if (Array.isArray(mat)) mat.forEach((x) => x.dispose())
+    else mat?.dispose?.()
+    const im = o as THREE.InstancedMesh
+    if (im.isInstancedMesh) im.dispose()
+  })
+}
+
 function jitter(g: THREE.BufferGeometry, seed: number, amt: number) {
   const r = rng(seed)
   const p = g.attributes.position as THREE.BufferAttribute

@@ -100,12 +100,14 @@ function FoundryPage({ rest }: { rest: Rest }) {
 
   const simulated = !!api?.simulated || snap?.mode === 'fixture'
 
-  const run = async (c: Command, okText: string) => {
-    if (!api) return
-    const r = await api.command(c)
+  const run = async (c: Command, okText: string): Promise<boolean> => {
+    if (!api) return false
+    let r: { ok: boolean; error?: string }
+    try { r = await api.command(c) } catch (e) { r = { ok: false, error: e instanceof Error ? e.message : String(e) } }
     // a failed command changes no state: show the error, do not touch the display
     setNotice({ text: r.ok ? okText : r.error ?? 'command failed', err: !r.ok, sim: simulated })
-    if (r.ok) syncRef.current?.resync()
+    if (r.ok) syncRef.current?.poll() // the upsert / comment_added events arrive on the next poll
+    return r.ok
   }
 
   const counts = useMemo(() => {
@@ -141,7 +143,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
 
 interface PanelProps {
   snap: NonNullable<PaneState['snap']>; state: PaneState; pick: Pick | null; setPick(p: Pick | null): void
-  run(c: Command, ok: string): Promise<void>; notice: { text: string; err: boolean; sim: boolean } | null
+  run(c: Command, ok: string): Promise<boolean>; notice: { text: string; err: boolean; sim: boolean } | null
   simulated: boolean; api: FoundryApi; scene: { current: FoundryScene | null }
 }
 
@@ -227,7 +229,7 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null }) 
     comments.length ? h('div', null, ...comments.map((c, i) => h('div', { key: i, style: { padding: '3px 0', fontSize: 12 } }, h('b', null, c.author), `: ${c.text}`))) : null,
     h('div', { style: { ...row, flexDirection: 'column' } },
       h('textarea', { id: 'foundry-comment', rows: 3, style: { ...field, resize: 'vertical' }, value: text, placeholder: 'Write a comment…', onChange: (e: any) => setText(e.target.value) }),
-      h('button', { id: 'foundry-comment-send', style: { ...btn(true), alignSelf: 'flex-end' }, disabled: !text.trim(), onClick: async () => { await p.run({ type: 'comment', card_id: card.id, text: text.trim() }, 'Comment added'); setText('') } }, 'Comment')))
+      h('button', { id: 'foundry-comment-send', style: { ...btn(true), alignSelf: 'flex-end' }, disabled: !text.trim(), onClick: async () => { if (await p.run({ type: 'comment', card_id: card.id, text: text.trim() }, 'Comment added')) setText('') } }, 'Comment')))
 }
 
 function DocView(p: PanelProps & { card: Card; doc: Extract<Pick, { kind: 'doc' }> }) {
@@ -258,7 +260,7 @@ function WorkerView(p: PanelProps & { worker: Worker }) {
       sect('Simulated controls'),
       h('div', { style: { display: 'flex', gap: 6 } },
         h('input', { style: { ...field, flex: 1 }, value: msg, placeholder: 'Message the climber', onChange: (e: any) => setMsg(e.target.value) }),
-        h('button', { style: btn(), disabled: !msg.trim(), onClick: async () => { await p.run({ type: 'message', worker_id: worker.id, text: msg.trim() }, 'Message queued'); setMsg('') } }, 'Send')),
+        h('button', { style: btn(), disabled: !msg.trim(), onClick: async () => { if (await p.run({ type: 'message', worker_id: worker.id, text: msg.trim() }, 'Message queued')) setMsg('') } }, 'Send')),
       h('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
         h('button', { style: btn(), onClick: () => p.run({ type: 'stand', on: !snap.paused }, snap.paused ? 'Resumed' : 'Standing at the next tool boundary') }, snap.paused ? 'Resume' : 'Stand'))) : null,
     tr ? h('div', null, sect(p.simulated ? 'Transcript (simulated)' : 'Transcript'),
