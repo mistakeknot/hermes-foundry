@@ -18,8 +18,8 @@ built from `desktop/src/plugin.ts` only:
 `desktop/src/probe.ts` is a development-only integration probe. It is not imported by
 `plugin.ts` and is not in the product bundle.
 
-Dragging a climber onto a scale only opens that card's profile selector, the same one the Assign button uses.
-It never claims the card and never infers a profile from the worker; you still pick a profile and press Assign,
+Dragging a climber onto a scale only opens that card's profile selector, the same one the profile buttons use.
+It never claims the card and never infers a profile from the worker; you still pick a profile (one click on its button),
 which sends `assign` only. A drop on anything else (empty space, a carving, a creature body, another climber) does
 nothing, and leaving the canvas mid-drag cancels it. Fixture and live behave the same.
 
@@ -50,7 +50,7 @@ Hermes copies the whole `desktop/` directory into `desktop-plugins/foundry`; onl
 The plugin registers three Hermes agent tools (toolset `foundry`). Each result is JSON `{ok, error?, simulated}`.
 
 - `foundry_assign{card_id, profile}`: **live**. Assigns a profile to a kanban card (`'<board>:<task>'`) through Hermes'
-  `assign_task`. It assigns only; it never claims or starts the card.
+  `assign_task`. It assigns only: Foundry does not claim or start the card, and Hermes may start it once assigned.
 - `foundry_stand{on}`: **fixture only, simulated**. Pauses or resumes the fixture. Stock Hermes has no equivalent, so
   against the live kanban it answers `ok: false` ("fixture only").
 - `foundry_message{worker_id, text}`: **fixture only, simulated**. Stock Hermes cannot address a kanban worker (a
