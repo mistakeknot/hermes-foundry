@@ -105,6 +105,59 @@ describe('approaching a creature fits it into the real pane', () => {
   })
 })
 
+describe('the focus fit survives the orbit controls through the real loop', () => {
+  /** Drive the scene's own loop (flushResize, focus lerp, controls.update, setDepthRange); no hand-set positions. */
+  function runLoop(s: any, frames: number) {
+    s.clock.getDelta = () => 0.1
+    for (let i = 0; i < frames; i++) s.loop()
+  }
+  function inFreeRect(s: any, v: any, w: number, h: number) {
+    s.camera.updateMatrixWorld(true)
+    const p = new THREE.Vector3()
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+    for (const q of creaturePoints(v.center, v.spec)) { p.copy(q).project(s.camera); minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y) }
+    const px = (x: number) => (x * 0.5 + 0.5) * w, py = (y: number) => (-y * 0.5 + 0.5) * h
+    return px(minX) >= EDGE_PX - 3 && px(maxX) <= w - EDGE_PX + 3 && py(maxY) >= HEADER_PX - 3 && py(minY) <= h - EDGE_PX + 3
+  }
+  it('a fit longer than the valley bound is not pulled back in by controls.update', () => {
+    const w = 140, h = 400 // a very narrow pane: the fit distance exceeds the default 70
+    const s = mk(w, h)
+    s.update(oneBigEpic(34))
+    const v = [...s.creatures.values()][0]
+    s.userMoved = true
+    s.controls.maxDistance = 70 // the bound frameValley leaves for a small valley
+    s.focusCreature(v.spec.projectId)
+    const want = s.focus.toP.distanceTo(s.focus.toT)
+    expect(want).toBeGreaterThan(70) // the premise: without the fix the clamp would bite
+    runLoop(s, 20)
+    expect(s.focus).toBeNull()
+    expect(s.camera.position.distanceTo(s.controls.target)).toBeGreaterThan(want * 0.98)
+    expect(s.controls.maxDistance).toBeGreaterThanOrEqual(want)
+    expect(inFreeRect(s, v, w, h)).toBe(true)
+  })
+  it('resizing a focused creature into a narrow pane keeps the whole fit through the loop', () => {
+    const s = mk(1000, 600)
+    s.update(oneBigEpic(34))
+    const v = [...s.creatures.values()][0]
+    s.controls.maxDistance = 70
+    s.focusCreature(v.spec.projectId)
+    runLoop(s, 20)
+    s.resize(140, 400)
+    runLoop(s, 20) // loop calls flushResize -> refocus, then controls.update
+    expect(s.focusedId).toBe(v.spec.projectId)
+    expect(inFreeRect(s, v, 140, 400)).toBe(true)
+  })
+  it('the depth range is re-applied after controls.update in the same loop', () => {
+    const s = mk(800, 600)
+    s.update(applySnapshot(buildFixture()).snap)
+    s.focusCreature([...s.creatures.keys()][0])
+    runLoop(s, 20)
+    const d = s.camera.position.distanceTo(s.controls.target)
+    expect(s.camera.far).toBeGreaterThan(d)
+    expect(s.camera.near).toBeLessThan(d)
+  })
+})
+
 describe('selection marker', () => {
   it('shows a ring, a pin and a label with the given text, and clears all three', () => {
     const s = mk(800, 600)

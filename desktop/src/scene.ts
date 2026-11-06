@@ -288,7 +288,17 @@ export class FoundryScene {
     this.focusedId = projectId
     const dest = this.fitCreature(v)
     if (!dest) return
+    this.allowReach(dest.pos.distanceTo(dest.target))
     this.focus = { fromT: this.controls.target.clone(), toT: dest.target, fromP: this.camera.position.clone(), toP: dest.pos, t: 0 }
+  }
+
+  /**
+   * The orbit controls clamp the camera to maxDistance on every update(). A fitted creature view in a narrow pane can need
+   * a longer distance than the valley's bound, and the clamp would pull the camera in and crop the creature, so the bound
+   * grows to cover the fit (frameValley sets it again from the valley whenever it reframes). It never shrinks here.
+   */
+  private allowReach(dist: number) {
+    this.controls.maxDistance = Math.max(this.controls.maxDistance, dist * 1.05)
   }
 
   /** Where the camera and target must be to frame one creature in the pane. The camera is left where it was. */
@@ -793,6 +803,7 @@ export class FoundryScene {
     const dest = this.fitCreature(v)
     if (!dest) return
     this.focus = null
+    this.allowReach(dest.pos.distanceTo(dest.target))
     this.controls.target.copy(dest.target)
     this.camera.position.copy(dest.pos)
     this.controls.update()
