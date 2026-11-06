@@ -17,7 +17,7 @@ vi.mock('three', async (orig) => {
 })
 
 import { FoundryScene } from '../src/scene'
-import { HEADER_PX, EDGE_PX, creaturePoints, ndcLimits, placeLabels, labelBox, overlaps, type LabelIn } from '../src/framing'
+import { HEADER_PX, EDGE_PX, MIN_FREE_PX, creaturePoints, ndcLimits, placeLabels, LabelPlacer, labelBox, overlaps, type LabelIn } from '../src/framing'
 import { buildFixture } from '../src/mock'
 import { applySnapshot } from '../src/reducer'
 import type { Snapshot } from '../src/types'
@@ -194,5 +194,153 @@ describe('the scene draws no colliding labels', () => {
     expect(scene.pinnedProject()).toBe(v.spec.projectId)
     scene.select(null)
     expect(scene.pinnedProject()).toBeNull()
+  })
+})
+
+describe('framing holds for crowded valleys and odd pane shapes', () => {
+  const within = (scene: any, w: number, h: number) => {
+    const lim = ndcLimits(w, h), b = extents(scene), eps = 1e-3
+    expect(b.maxX).toBeLessThanOrEqual(lim.x + eps)
+    expect(b.minX).toBeGreaterThanOrEqual(-lim.x - eps)
+    expect(b.maxY).toBeLessThanOrEqual(lim.yTop + eps)
+    expect(b.minY).toBeGreaterThanOrEqual(-lim.yBottom - eps)
+    return b
+  }
+  it('30 creatures at 800x600: nothing cropped, and every point is in front of the far plane', () => {
+    const scene = mk(800, 600); scene.update(snapshotWith(30)); scene.resize(800, 600)
+    within(scene, 800, 600)
+    const d = scene.camera.position.distanceTo(scene.controls.target)
+    expect(scene.camera.far).toBeGreaterThan(d)
+    for (const v of scene.creatures.values()) for (const q of creaturePoints(v.center, v.spec)) expect(new THREE.Vector3().copy(q).project(scene.camera).z).toBeLessThanOrEqual(1)
+  })
+  it('8 creatures in a 100x800 pane: nothing cropped (the search bound grows until they fit)', () => {
+    const scene = mk(100, 800); scene.update(snapshotWith(8)); scene.resize(100, 800)
+    within(scene, 100, 800)
+    expect(scene.camera.position.distanceTo(scene.controls.target)).toBeGreaterThan(140) // past the old fixed ceiling
+    expect(scene.controls.maxDistance).toBeGreaterThanOrEqual(scene.camera.position.distanceTo(scene.controls.target))
+  })
+  it('a short pane keeps the creatures clear of the header: 800x100 puts every point below HEADER_PX', () => {
+    const scene = mk(800, 100); scene.update(snapshotWith(3)); scene.resize(800, 100)
+    const b = within(scene, 800, 100)
+    expect(((1 - b.maxY) * 100) / 2).toBeGreaterThanOrEqual(HEADER_PX - 1e-3)
+  })
+  it('the free rectangle is the pane less the margins, and shrinks side and bottom margins before giving up the header', () => {
+    const big = ndcLimits(800, 600)
+    expect(big.usable).toBe(true)
+    expect(((1 - big.yTop) * 600) / 2).toBeCloseTo(HEADER_PX)
+    expect(((1 - big.yBottom) * 600) / 2).toBeCloseTo(EDGE_PX)
+    expect(((1 - big.x) * 800) / 2).toBeCloseTo(EDGE_PX)
+    const short = ndcLimits(800, 70) // 18px under the header: the bottom margin gives way, the header does not
+    expect(short.usable).toBe(true)
+    expect(((1 - short.yTop) * 70) / 2).toBeCloseTo(HEADER_PX)
+    const free = (short.yTop + short.yBottom) * 70 / 2
+    expect(free).toBeGreaterThanOrEqual(MIN_FREE_PX - 1e-6)
+    const narrow = ndcLimits(30, 600)
+    expect(narrow.usable).toBe(true)
+    expect(narrow.x * 30).toBeGreaterThanOrEqual(MIN_FREE_PX - 1e-6)
+  })
+  it('a pane with no usable area is reported, not clamped, and still frames without throwing', () => {
+    for (const [w, h] of [[800, 52], [800, 55], [4, 600], [40, 30]] as [number, number][]) {
+      const lim = ndcLimits(w, h)
+      expect(lim.usable).toBe(false)
+      expect(lim).toMatchObject({ x: 1, yTop: 1, yBottom: 1 })
+      const scene = mk(Math.max(w, 2), Math.max(h, 2)); scene.update(snapshotWith(3)); scene.resize(Math.max(w, 2), Math.max(h, 2))
+      expect(Number.isFinite(scene.camera.position.x + scene.camera.position.y + scene.camera.position.z)).toBe(true)
+      const b = extents(scene)
+      expect(b.maxX).toBeLessThanOrEqual(1.001); expect(b.minX).toBeGreaterThanOrEqual(-1.001)
+      expect(b.maxY).toBeLessThanOrEqual(1.001); expect(b.minY).toBeGreaterThanOrEqual(-1.001)
+    }
+    expect(ndcLimits(0, 0).usable).toBe(false)
+    expect(ndcLimits(NaN, 600).usable).toBe(false)
+  })
+})
+
+describe('a frame of label placement allocates nothing once warm', () => {
+  it('LabelPlacer rewrites the same records and keeps its order across frames', () => {
+    const pl = new LabelPlacer()
+    const frame = (dx: number) => {
+      pl.begin()
+      for (let i = 0; i < 40; i++) pl.add(30 + i * 18 + dx, 300 + (i % 5) * 20, 60, 10 + i, i === 7)
+      for (let i = 0; i < 6; i++) pl.addAvoid(100 * i, 280, 100 * i + 30, 310)
+      pl.place(900, 600)
+    }
+    frame(0)
+    const outs = pl.out.slice(), order = (pl as any).order, ins = (pl as any).ins.slice(), avoid = (pl as any).avoid.slice(), placed = (pl as any).placed.slice()
+    const orderBefore = order.slice()
+    frame(1)
+    expect(pl.out.length).toBe(40)
+    pl.out.forEach((o, i) => expect(o).toBe(outs[i]))
+    expect((pl as any).order).toBe(order)
+    expect((pl as any).order).toEqual(orderBefore) // nothing re-sorted when nothing moved in rank
+    ;(pl as any).ins.forEach((o: unknown, i: number) => expect(o).toBe(ins[i]))
+    ;(pl as any).avoid.forEach((o: unknown, i: number) => expect(o).toBe(avoid[i]))
+    placed.forEach((o: unknown, i: number) => expect((pl as any).placed[i]).toBe(o))
+    expect((pl as any).ins.length).toBe(40)
+  })
+  it('the order is repaired when ranks change, and pinned still goes first', () => {
+    const pl = new LabelPlacer()
+    pl.begin(); pl.add(100, 300, 60, 10, false); pl.add(400, 300, 60, 20, false); pl.add(700, 300, 60, 30, false); pl.place(900, 600)
+    pl.begin(); pl.add(100, 300, 60, 50, false); pl.add(400, 300, 60, 20, false); pl.add(700, 300, 60, 30, true); pl.place(900, 600)
+    expect((pl as any).order).toEqual([2, 1, 0])
+  })
+  it('the scene touches no DOM property on a frame where nothing changed', () => {
+    const scene = mk(); scene.update(snapshotWith(3)); scene.resize(800, 600)
+    scene.positionLabels() // warm: first frame writes everything
+    let writes = 0
+    for (const v of scene.creatures.values()) for (const l of v.labels) {
+      for (const k of ['left', 'top', 'opacity', 'display']) {
+        let cur = l.el.style[k]
+        Object.defineProperty(l.el.style, k, { get: () => cur, set: (x) => { writes++; cur = x }, configurable: true })
+      }
+      let t = l.el.textContent
+      Object.defineProperty(l.el, 'textContent', { get: () => t, set: (x) => { writes++; t = x }, configurable: true })
+    }
+    scene.positionLabels()
+    scene.positionLabels()
+    expect(writes).toBe(0)
+    scene.camera.position.x += 6; scene.camera.lookAt(scene.controls.target); scene.camera.updateMatrixWorld(true) // a real change does write
+    scene.positionLabels()
+    expect(writes).toBeGreaterThan(0)
+  })
+})
+
+describe('hover work queued before the pointer leaves cannot run after it', () => {
+  function hoverScene() {
+    const handlers: Record<string, (e: any) => void> = {}
+    const canvas = { ...fakeCanvas(), addEventListener: (t: string, f: any) => { handlers[t] = f } }
+    const hovers: (string | null)[] = []
+    const scene = new FoundryScene(canvas as any, { appendChild() {} } as unknown as HTMLElement, { onPick() {}, onHover: (t: string | null) => hovers.push(t) }) as any
+    scene.update(snapshotWith(3)); scene.resize(800, 600)
+    const project = [...scene.creatures.values()][0].spec.projectId
+    scene.pickAt = () => ({ pick: { kind: 'project', id: project }, label: 'hit' })
+    const queue: (() => void)[] = []
+    ;(globalThis as any).requestAnimationFrame = (f: () => void) => { queue.push(f); return queue.length }
+    const ev = (x = 100, y = 200) => ({ clientX: x, clientY: y, buttons: 0, pointerId: 1 })
+    return { scene, handlers, queue, hovers, project, ev }
+  }
+  it('move, leave, then the animation frame: hoverProject stays cleared and nothing is pinned', () => {
+    const { scene, handlers, queue, hovers, ev } = hoverScene()
+    handlers.pointermove(ev())
+    expect(queue.length).toBe(1)
+    handlers.pointerleave(ev())
+    queue.splice(0).forEach((f) => f())
+    expect(scene.hoverProject).toBeNull()
+    expect(scene.pinnedProject()).toBeNull()
+    expect(hovers.at(-1)).toBeNull()
+  })
+  it('a move after re-entering is not swallowed by the stale one, and does hover', () => {
+    const { scene, handlers, queue, project, ev } = hoverScene()
+    handlers.pointermove(ev())
+    handlers.pointerleave(ev())
+    handlers.pointermove(ev(120, 210)) // back inside before the stale frame fires
+    expect(queue.length).toBe(2)
+    queue.splice(0).forEach((f) => f())
+    expect(scene.hoverProject).toBe(project)
+  })
+  it('without a leave the queued frame still applies', () => {
+    const { scene, handlers, queue, project, ev } = hoverScene()
+    handlers.pointermove(ev())
+    queue.splice(0).forEach((f) => f())
+    expect(scene.hoverProject).toBe(project)
   })
 })

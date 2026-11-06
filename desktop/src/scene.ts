@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildCreature, frameAt, layoutCreatures, type CreatureSpec, type LimbSpec, type Material, type V3 } from './creature'
 import { hashString, rng } from './rng'
-import { creaturePoints, fitCamera, placeLabels, type Box, type LabelIn } from './framing'
+import { creaturePoints, fitCamera, LabelPlacer } from './framing'
 import { claimedWithoutClimber } from './reducer'
 import { dropOutcome, isDrag, type AssignRequest } from './drag'
 import { slipPose } from './slip'
@@ -42,6 +42,13 @@ export function showScales(totalCards: number, dist: number, radius: number): bo
   return totalCards <= CROWDED || dist < 7 + radius * 1.7
 }
 
+/** One limb label. The cache fields let a frame skip text and style writes when nothing changed (see positionLabels). */
+interface LabelView {
+  el: HTMLElement; world: THREE.Vector3; limb: LimbSpec
+  textKey: number; width: number // text is rebuilt only when this key changes (-1 = plain title, n = title with a count)
+  shown: boolean | null; sx: number; sy: number; so: number // what the element currently shows
+}
+
 interface CreatureView {
   spec: CreatureSpec
   key: string
@@ -57,7 +64,7 @@ interface CreatureView {
   carvingMeshes: THREE.InstancedMesh[]
   carvingInfo: { cardId: string; path: string; title: string }[][]
   torso: THREE.Mesh
-  labels: { el: HTMLElement; world: THREE.Vector3; limb: LimbSpec }[]
+  labels: LabelView[]
   cardPos: Map<string, THREE.Vector3> // world position of each card's scale
   limbOf: Map<string, LimbSpec>
 }
@@ -309,7 +316,7 @@ export class FoundryScene {
       el.textContent = `${limb.title}`
       el.style.cssText = 'position:absolute;pointer-events:none;font:11px var(--dt-font-sans,system-ui);color:#eef2e6;text-shadow:0 1px 3px #000;white-space:nowrap;transform:translate(-50%,-120%);opacity:0.92'
       this.labelHost.appendChild(el)
-      labels.push({ el, world: new THREE.Vector3(tip[0], tip[1] + lift + limb.radii.at(-1)! + 0.5, tip[2]).add(center), limb })
+      labels.push({ el, world: new THREE.Vector3(tip[0], tip[1] + lift + limb.radii.at(-1)! + 0.5, tip[2]).add(center), limb, textKey: -2, width: 0, shown: null, sx: NaN, sy: NaN, so: NaN })
       // aggregate band: one thin loft per status over the limb, proportional to counts
       let t0 = 0.06
       const total = limb.scales.length || 1
@@ -650,7 +657,9 @@ export class FoundryScene {
     if (this.drag && !this.drag.cancelled && !this.inside(e)) this.cancelDrag()
     if (this.hoverQueued || (e.buttons && !this.drag)) return
     this.hoverQueued = true
+    const gen = this.hoverGen
     requestAnimationFrame(() => {
+      if (gen !== this.hoverGen) return // the pointer left after this was queued; leaving already reset the queue
       this.hoverQueued = false
       if (this.disposed) return
       const hit = this.pickAt(this.ndc({ clientX: this.lastPointer.x, clientY: this.lastPointer.y } as MouseEvent))
@@ -675,7 +684,10 @@ export class FoundryScene {
     return null
   }
   // leaving the canvas mid-drag cancels it: no drop, no change
+  private hoverGen = 0 // bumped on pointerleave so hover work queued before it cannot run after it
   private onLeave = (e: PointerEvent) => {
+    this.hoverGen++
+    this.hoverQueued = false
     this.hoverProject = null
     this.cb.onHover(null, 0, 0)
     if (this.drag && e.pointerId === this.drag.id) { this.down = null; this.endDrag() }
@@ -722,42 +734,50 @@ export class FoundryScene {
     this.frameCount++
   }
 
-  /** Project each limb label, then drop the ones that would collide (see placeLabels); the rest fade with distance. */
+  private placer = new LabelPlacer()
+  /** Project each limb label, then drop the ones that would collide (see LabelPlacer); the rest fade with distance.
+   *  Runs every frame, so it reuses the placer's pools and only touches the DOM for labels whose text or place changed. */
   private positionLabels() {
     const w = this.canvas.clientWidth || this.viewW, h = this.canvas.clientHeight || this.viewH
-    const all: { l: CreatureView['labels'][number]; at: { x: number; y: number } }[] = []
-    const ins: LabelIn[] = []
+    const pl = this.placer
+    pl.begin()
     const pinned = this.pinnedProject()
+    const crowded = this.totalCards > CROWDED
     for (const v of this.creatures.values()) {
+      const mine = v.spec.projectId === pinned
       for (const l of v.labels) {
         const n = l.limb.scales.length
-        const text = this.totalCards > CROWDED && n > 0 ? `${l.limb.title} · ${n}` : l.limb.title
-        if (l.el.textContent !== text) l.el.textContent = text
+        const key = crowded && n > 0 ? n : -1
+        if (key !== l.textKey) {
+          l.textKey = key
+          const text = key >= 0 ? `${l.limb.title} · ${n}` : l.limb.title
+          l.el.textContent = text
+          l.width = text.length * 6.4 + 8
+        }
         this.tmp.copy(l.world).project(this.camera)
         const inView = this.tmp.z < 1 && Math.abs(this.tmp.x) < 1.1 && Math.abs(this.tmp.y) < 1.1
-        const at = { x: (this.tmp.x * 0.5 + 0.5) * w, y: (-this.tmp.y * 0.5 + 0.5) * h }
-        all.push({ l, at })
-        ins.push({ x: at.x, y: at.y, width: text.length * 6.4 + 8, dist: inView ? this.camera.position.distanceTo(l.world) : Infinity, pinned: inView && v.spec.projectId === pinned })
+        pl.add((this.tmp.x * 0.5 + 0.5) * w, (-this.tmp.y * 0.5 + 0.5) * h, l.width, inView ? this.camera.position.distanceTo(l.world) : Infinity, inView && mine)
       }
     }
     // climber rings: keep labels off them
-    const avoid: Box[] = []
     for (const c of this.climbers.values()) {
       this.tmp.copy(c.mesh.position).project(this.camera)
       if (this.tmp.z >= 1) continue
       const x = (this.tmp.x * 0.5 + 0.5) * w, y = (-this.tmp.y * 0.5 + 0.5) * h
-      avoid.push({ l: x - 16, r: x + 16, t: y - 16, b: y + 16 })
+      pl.addAvoid(x - 16, y - 16, x + 16, y + 16)
     }
     const fadeFrom = Math.max(45, this.frameDist * 1.2)
-    const out = placeLabels(ins, avoid, w, h, fadeFrom, fadeFrom + 35)
-    all.forEach(({ l }, i) => {
-      const o = out[i]
-      l.el.style.display = o.show ? 'block' : 'none'
-      if (!o.show) return
-      l.el.style.left = `${o.x}px`
-      l.el.style.top = `${o.y}px`
-      l.el.style.opacity = String(o.opacity)
-    })
+    pl.place(w, h, fadeFrom, fadeFrom + 35)
+    let i = 0
+    for (const v of this.creatures.values()) for (const l of v.labels) {
+      const o = pl.out[i++]
+      if (o.show !== l.shown) { l.shown = o.show; l.el.style.display = o.show ? 'block' : 'none' }
+      if (!o.show) continue
+      const x = Math.round(o.x * 10) / 10, y = Math.round(o.y * 10) / 10, op = Math.round(o.opacity * 100) / 100
+      if (x !== l.sx) { l.sx = x; l.el.style.left = `${x}px` }
+      if (y !== l.sy) { l.sy = y; l.el.style.top = `${y}px` }
+      if (op !== l.so) { l.so = op; l.el.style.opacity = String(op) }
+    }
   }
 
   /** The project whose labels are always shown: the one under the pointer, else the one holding the selected card. */
