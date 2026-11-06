@@ -4,6 +4,8 @@ Bead: mk-ps6ow. Card: GSVP-10 (closed). mk's answer on the card: "3D workspace t
 Deadline: Nov 11, 2026, 2 PM PST. Build window: Nov 7 to Nov 10; Nov 11 morning is for the video and submission.
 Name "Foundry" is a placeholder (design choice).
 
+**Status of this document: proposed.** The only decision mk made is the idea, on card GSVP-10 ("3D workspace to visualize and operate the software factory in hermes"). Everything else here is a design choice, proposed and not decided: the scope, the day plan, the cut order and every "must", "never" and "required" below. No line in this document records an mk ruling other than the idea. If a cut would change what mk sees in the entry, it goes to mk as one question through the vizier.
+
 ## What "the software factory" means here (design choice)
 Judges run stock Hermes, so the factory must be Hermes's own:
 - **Projects** are Hermes kanban boards.
@@ -86,7 +88,7 @@ A second adapter that reads beads and Citadel is the GSV bonus. It ships only if
 ## Risks
 - **Cross-plugin REST access and CSP for three.js are unverified.** Fallback: Foundry's own Python router proxies the kanban calls; serve the scene as a local web page opened from a slash command.
 - **Legibility past about 100 cards.** Show scales only on zoom; group by epic.
-- **Scope. Cut in this order:** the beads adapter (cut now), sound, the slip check, "stand" (unless proven Nov 7), live message and delegation, then the drag gesture. Never cut: click-to-open, and assign and status via buttons. Dragging is polish.
+- **Scope (proposed, not decided). Proposed cut order:** the beads adapter (cut now), sound, the slip check, "stand" (unless proven Nov 7), live message and delegation, then the drag gesture. Proposed floor, not to be cut: click-to-open, and assign and status via buttons. Dragging is polish.
 - **"Stand" must not overclaim.** It pauses at the next tool boundary and never claims to cancel a tool call already running.
 - **Acceptance:** a small timed checklist (open a card, change a status, assign a worker, each at least as fast as the 2D board) and a clean-install fixture rehearsal on Nov 9 and again on Nov 10. Live execution is optional.
 
