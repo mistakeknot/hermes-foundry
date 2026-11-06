@@ -214,6 +214,7 @@ export class FoundryScene {
       this.recolor(v, proj.cards, snap.workers)
     })
     for (const [id, v] of this.creatures) if (!seen.has(id)) { this.disposeCreature(v); this.creatures.delete(id) }
+    if (this.hoverProject && !this.creatures.has(this.hoverProject)) this.hoverProject = null // the hovered project is gone
     this.updateBeacons(snap)
     this.updateClimbers(snap)
     if (this.selectedCard) this.select(this.selectedCard)
@@ -242,15 +243,19 @@ export class FoundryScene {
   private viewW = 0
   private viewH = 0
   private frameDist = 50
+  private frameGeo: { sig: string; pts: THREE.Vector3[]; mid: THREE.Vector3 } | null = null
   frameValley(force: boolean) {
     if (this.framed && !force) return
     if (this.creatures.size === 0 || this.viewW < 2) return
     this.framed = true
     this.frameSig = this.layoutSignature()
-    const pts: THREE.Vector3[] = []
-    for (const v of this.creatures.values()) pts.push(...creaturePoints(v.center, v.spec))
-    const box = new THREE.Box3().setFromPoints(pts)
-    const mid = box.getCenter(new THREE.Vector3())
+    // the points and their centre depend on the creatures, not the pane size: keep them between resizes
+    if (this.frameGeo?.sig !== this.frameSig) {
+      const pts: THREE.Vector3[] = []
+      for (const v of this.creatures.values()) pts.push(...creaturePoints(v.center, v.spec))
+      this.frameGeo = { sig: this.frameSig, pts, mid: new THREE.Box3().setFromPoints(pts).getCenter(new THREE.Vector3()) }
+    }
+    const { pts, mid } = this.frameGeo
     this.controls.target.set(mid.x, 0, mid.z)
     this.frameDist = fitCamera(this.camera, this.controls.target, pts, this.viewW, this.viewH)
     this.controls.maxDistance = Math.max(70, this.frameDist * 1.3)
@@ -707,13 +712,24 @@ export class FoundryScene {
   }
 
   // ---------------- loop ----------------
+  /**
+   * Resizing a pane delivers many sizes per frame. Only the last one is applied, once, at the start of the next frame
+   * (`flushResize`, called by the loop before it renders), together with one reframe.
+   */
+  private pendingSize: { w: number; h: number } | null = null
   resize(w: number, h: number) {
     if (!Number.isFinite(w) || !Number.isFinite(h) || w < 2 || h < 2) return // a bad size must not reach the renderer or camera
-    this.renderer.setSize(w, h, false)
-    this.camera.aspect = w / h
+    this.pendingSize = { w, h }
+  }
+  flushResize() {
+    const s = this.pendingSize
+    if (!s) return
+    this.pendingSize = null
+    this.renderer.setSize(s.w, s.h, false)
+    this.camera.aspect = s.w / s.h
     this.camera.updateProjectionMatrix()
-    this.viewW = w
-    this.viewH = h
+    this.viewW = s.w
+    this.viewH = s.h
     if (!this.userMoved) this.frameValley(true)
   }
 
@@ -723,6 +739,7 @@ export class FoundryScene {
     this.raf = requestAnimationFrame(this.loop)
     const dt = Math.min(this.clock.getDelta(), 0.1)
     const t = this.clock.elapsedTime
+    this.flushResize()
     if (this.focus) {
       this.focus.t = Math.min(1, this.focus.t + dt * 2.5)
       this.controls.target.lerpVectors(this.focus.from, this.focus.to, this.focus.t)
@@ -796,7 +813,7 @@ export class FoundryScene {
   /** The project whose labels are always shown: the one under the pointer, else the one holding the selected card. */
   private hoverProject: string | null = null
   private pinnedProject(): string | null {
-    if (this.hoverProject) return this.hoverProject
+    if (this.hoverProject && this.creatures.has(this.hoverProject)) return this.hoverProject
     if (!this.selectedCard) return null
     for (const v of this.creatures.values()) if (v.cardPos.has(this.selectedCard)) return v.spec.projectId
     return null

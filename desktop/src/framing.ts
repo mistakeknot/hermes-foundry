@@ -85,7 +85,7 @@ export function ndcBounds(camera: THREE.PerspectiveCamera, points: THREE.Vector3
 }
 
 /** Farthest the search will look. Past this the pane is so small or the valley so large that nothing sensible fits. */
-const MAX_DISTANCE = 1e5
+const MAX_DISTANCE = 1e7
 
 /**
  * Put the camera on the fixed viewing direction at the smallest distance where every point fits, then slide the target
@@ -99,9 +99,11 @@ export function fitCamera(camera: THREE.PerspectiveCamera, target: THREE.Vector3
   const lim = ndcLimits(w, h)
   const d0 = dir.clone().normalize()
   const baseFar = Math.max(camera.far, 400)
+  const baseNear = camera.near
   const place = (d: number) => {
     const far = Math.max(baseFar, d * 3) // the valley sits within a few creature-widths of the target; 3x leaves it all in front of the far plane
-    if (camera.far !== far) { camera.far = far; camera.updateProjectionMatrix() }
+    const near = d > 1e4 ? d / 1000 : baseNear // a sliver pane pushes the camera very far back: keep the depth range usable
+    if (camera.far !== far || camera.near !== near) { camera.far = far; camera.near = near; camera.updateProjectionMatrix() }
     camera.position.copy(target).addScaledVector(d0, d)
     camera.lookAt(target)
     camera.updateMatrixWorld(true)
@@ -151,8 +153,17 @@ export function fitCamera(camera: THREE.PerspectiveCamera, target: THREE.Vector3
   const solve = () => {
     let lo = range[0], hi = range[1]
     settle(hi)
-    while (!fits(camera, points, lim) && hi < MAX_DISTANCE) { lo = hi; hi *= 2; settle(hi) }
-    for (let i = 0; i < 28; i++) {
+    while (!fits(camera, points, lim) && hi < MAX_DISTANCE) {
+      // Grow the bound by how far over the limits the points are, not blindly: a sliver pane (60 x 10000) needs a
+      // distance thousands of times the default, and the projected spread shrinks in proportion to the distance.
+      const b = ndcBounds(camera, points)
+      const over = Math.max((b.maxX - b.minX) / (2 * lim.x), (b.maxY - b.minY) / (lim.yTop + lim.yBottom))
+      lo = hi
+      hi = Math.min(MAX_DISTANCE, hi * (Number.isFinite(over) ? Math.min(1e3, Math.max(2, over * 1.1)) : 2))
+      settle(hi)
+    }
+    // 0.25% of the distance is far below a pixel's worth of framing; stopping there (hi always holds a verified fit) saves most trials
+    for (let i = 0; i < 22 && hi - lo > hi * 0.0025; i++) {
       const mid = (lo + hi) / 2
       settle(mid)
       if (fits(camera, points, lim)) hi = mid; else lo = mid

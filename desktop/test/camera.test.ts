@@ -32,7 +32,10 @@ beforeAll(() => {
 function fakeCanvas(w = 800, h = 600) {
   return { style: {}, addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h }), clientWidth: w, clientHeight: h, ownerDocument: { addEventListener() {}, removeEventListener() {} }, getRootNode: () => ({ addEventListener() {}, removeEventListener() {} }), setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture: () => false }
 }
-const mk = (w = 800, h = 600) => new FoundryScene(fakeCanvas(w, h) as any, { appendChild() {} } as unknown as HTMLElement, { onPick() {}, onHover() {} }) as any
+/** resize() is coalesced to the next frame; the older tests want it applied at once, so they flush after each call. */
+const syncResize = (scene: any) => { const orig = scene.resize.bind(scene); scene.resize = (w: number, h: number) => { orig(w, h); scene.flushResize() }; return scene }
+const mkRaw = (w = 800, h = 600) => new FoundryScene(fakeCanvas(w, h) as any, { appendChild() {} } as unknown as HTMLElement, { onPick() {}, onHover() {} }) as any
+const mk = (w = 800, h = 600) => syncResize(mkRaw(w, h))
 
 /** The fixture, widened to n projects so a crowded valley is covered too. */
 function snapshotWith(n: number): Snapshot {
@@ -309,7 +312,7 @@ describe('hover work queued before the pointer leaves cannot run after it', () =
     const handlers: Record<string, (e: any) => void> = {}
     const canvas = { ...fakeCanvas(), addEventListener: (t: string, f: any) => { handlers[t] = f } }
     const hovers: (string | null)[] = []
-    const scene = new FoundryScene(canvas as any, { appendChild() {} } as unknown as HTMLElement, { onPick() {}, onHover: (t: string | null) => hovers.push(t) }) as any
+    const scene = syncResize(new FoundryScene(canvas as any, { appendChild() {} } as unknown as HTMLElement, { onPick() {}, onHover: (t: string | null) => hovers.push(t) }) as any)
     scene.update(snapshotWith(3)); scene.resize(800, 600)
     const project = [...scene.creatures.values()][0].spec.projectId
     scene.pickAt = () => ({ pick: { kind: 'project', id: project }, label: 'hit' })
@@ -414,4 +417,45 @@ describe('framing survives short panes, changing layouts and bad sizes', () => {
     expect(scene.camera.aspect).toBeCloseTo(500 / 700)
     within(scene, 500, 700)
   })
+
+  for (const [w, h] of [[60, 10000], [10000, 60], [40, 3000], [3000, 40]] as [number, number][]) {
+    it(`30 creatures in an extreme ${w}x${h} pane are all projected inside the free rectangle`, () => {
+      const scene = mk(w, h); scene.update(snapshotWith(30)); scene.resize(w, h)
+      const lim = ndcLimits(w, h), b = extents(scene), eps = 1e-3
+      expect(Number.isFinite(scene.camera.position.length())).toBe(true)
+      expect(b.maxX).toBeLessThanOrEqual(lim.x + eps)
+      expect(b.minX).toBeGreaterThanOrEqual(-lim.x - eps)
+      expect(b.maxY).toBeLessThanOrEqual(lim.yTop + eps)
+      expect(b.minY).toBeGreaterThanOrEqual(-lim.yBottom - eps)
+    })
+  }
+
+  it('removing the hovered project drops its hover, so the selected project is pinned again', () => {
+    const scene = mk(800, 600); scene.update(snapshotWith(3)); scene.resize(800, 600)
+    const [first, , third] = [...scene.creatures.values()]
+    scene.select([...first.cardPos.keys()][0])
+    scene.hoverProject = third.spec.projectId
+    expect(scene.pinnedProject()).toBe(third.spec.projectId)
+    scene.update(snapshotWith(2)) // the third project is gone
+    expect(scene.hoverProject).toBeNull()
+    expect(scene.pinnedProject()).toBe(first.spec.projectId)
+    scene.hoverProject = 'gone-for-good' // and a stale id is never returned even if it slipped in
+    expect(scene.pinnedProject()).toBe(first.spec.projectId)
+  })
+
+  it('many resizes in one frame cost one reframe, at the last size; nonfinite sizes in between are ignored', () => {
+    const scene = mkRaw(800, 600); scene.update(snapshotWith(30))
+    scene.resize(800, 600); scene.flushResize()
+    const spy = vi.spyOn(scene, 'frameValley')
+    for (let i = 0; i < 50; i++) scene.resize(600 + i * 8, 500 + i * 3)
+    scene.resize(NaN, 100)
+    expect(spy).not.toHaveBeenCalled() // nothing solved while the sizes are still arriving
+    scene.loop() // the next frame
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(scene.camera.aspect).toBeCloseTo((600 + 49 * 8) / (500 + 49 * 3))
+    scene.loop()
+    expect(spy).toHaveBeenCalledTimes(1) // nothing pending: no second solve
+    within(scene, 600 + 49 * 8, 500 + 49 * 3)
+  })
+
 })
