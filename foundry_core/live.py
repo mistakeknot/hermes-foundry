@@ -170,11 +170,19 @@ class LiveSource:
 
     def _cmd_set_status(self, conn: Any, board: str, task_id: str, cmd: dict[str, Any]) -> dict[str, Any]:
         target = cmd.get("status_native")
-        current = self._kb.get_task(conn, task_id).status
+        task = self._kb.get_task(conn, task_id)
+        current = task.status
         allowed = self._workflow.manual.get(current, frozenset())
         if not isinstance(target, str) or target not in allowed or target == "archived":
             return {"ok": False, "error": f"{current} -> {target} is not a manual move; allowed: "
                                           f"{', '.join(sorted(allowed - {'archived'})) or 'none'}"}
+        if target == "done" and current != "review" and not str(getattr(task, "result", None) or "").strip():
+            # The stock completion refuses a card with no result or summary evidence, but only after taking a write
+            # lock to log the refusal, which can wait on a busy dispatcher. Foundry sends no result or summary, so the
+            # outcome is known from this read: say so now, with the way out, and touch nothing.
+            way = " Move it to review first, or complete it in Hermes." if "review" in allowed else " Complete it in Hermes."
+            return {"ok": False, "error": f"completion blocked: {board}:{task_id} has no result or summary "
+                                          f"evidence, and Foundry cannot write one.{way}"}
         api = self._kanban_router()
         try:
             api.update_task(task_id, api.UpdateTaskBody(status=target), board=board)
