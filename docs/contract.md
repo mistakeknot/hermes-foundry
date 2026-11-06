@@ -69,7 +69,7 @@ Live commands (proposed floor; each maps to a verified Hermes action):
 | command | live action |
 |---|---|
 | `set_status{card_id, status_native}` | the kanban PATCH, limited to the native workflow's manual moves; a move the workflow refuses returns `ok:false` with the reason |
-| `assign{card_id, profile}` | `assign_task(conn, task_id, profile)`: assigns the profile. It does **not** claim the card. |
+| `assign{card_id, profile}` | `assign_task(conn, task_id, profile)`: assigns the profile. Foundry does **not** claim or start the card; Hermes' dispatcher may start a ready card once it is assigned. |
 | `comment{card_id, text}` | `add_comment` |
 
 Proposed optional commands, **fixture only until each is proven against stock Hermes on the gate days, and drawn with a "simulated" badge when not live**: `claim{card_id, worker_id}` (a simulated claim), `message{worker_id, text}`, `stand{on}`, `new_worker{card_id}` (a simulated launch), and `reset{}`. The cited delegation API configures routing and has no worker-launch action, so `new_worker` has no live implementation until a launch call is found and shown to work on stock Hermes.

@@ -27,7 +27,7 @@ A second adapter that reads beads and Citadel is the GSV bonus. Proposed: cut no
   - Optional: a slip comes from a repeated-row check in pre_tool_call, the True Touch idea. Without it, "looping" is shown only where the source reports it (or in the fixture, labelled simulated).
 - **Operating from the scene (floor, proposed):**
   - Click a scale and its card opens in a side panel, where you can comment and change status.
-  - Assign a card to a profile with a button. This is a profile assignment (`assign_task`), not a claim: the card's claimant (the worker that holds it) is shown separately and is never inferred from the profile.
+  - Assign a card to a profile with a button. This is a profile assignment (`assign_task`), not a claim (Foundry does not claim or start the card, and Hermes may start it once assigned): the card's claimant (the worker that holds it) is shown separately and is never inferred from the profile.
 - **Operating from the scene (optional, in cut order):**
   - Drag a climber onto a scale. This only opens the same profile selector as the assign button (a worker exposes no profile, so the profile is never inferred from the worker); it does not claim the card.
   - Click a climber to see its name, state and held card; a bounded transcript and "send a message" only if the live source supports them (see docs/contract.md, Transcripts). Fixture mode simulates them, labelled.
