@@ -458,4 +458,45 @@ describe('framing survives short panes, changing layouts and bad sizes', () => {
     within(scene, 600 + 49 * 8, 500 + 49 * 3)
   })
 
+  describe('depth planes follow the current distance, not the largest one seen', () => {
+    const zRange = (scene: any) => {
+      const p = new THREE.Vector3(); let lo = Infinity, hi = -Infinity
+      scene.camera.updateMatrixWorld(true)
+      for (const v of scene.creatures.values()) for (const q of creaturePoints(v.center, v.spec)) {
+        p.copy(q).project(scene.camera); lo = Math.min(lo, p.z); hi = Math.max(hi, p.z)
+      }
+      return { lo, hi }
+    }
+    const inDepth = (scene: any) => {
+      const { lo, hi } = zRange(scene)
+      expect(lo).toBeGreaterThanOrEqual(-1)
+      expect(hi).toBeLessThanOrEqual(1)
+    }
+    const zoomTo = (scene: any, f: number) => { // user zoom: move along the view line, then a frame
+      const to = scene.controls.target, off = scene.camera.position.clone().sub(to)
+      scene.camera.position.copy(to).addScaledVector(off, f)
+      scene.loop()
+    }
+    for (const [a, b] of [[[60, 10000], [800, 600]], [[800, 600], [60, 10000]], [[10000, 60], [800, 600]]] as [number, number][][]) {
+      it(`${a.join('x')} then ${b.join('x')}: every point stays between the near and far planes, also after a zoom`, () => {
+        const scene = mk(a[0], a[1]); scene.update(snapshotWith(30)); scene.resize(a[0], a[1])
+        inDepth(scene)
+        scene.resize(b[0], b[1])
+        inDepth(scene)
+        zoomTo(scene, 0.8); inDepth(scene)
+        scene.resize(a[0], a[1]); inDepth(scene)
+        zoomTo(scene, 0.8); inDepth(scene)
+      })
+    }
+    it('back at a normal pane the near and far planes are the original ones', () => {
+      const scene = mk(800, 600); scene.update(snapshotWith(30)); scene.resize(800, 600)
+      const near = scene.camera.near, far = scene.camera.far
+      scene.resize(60, 10000)
+      expect(scene.camera.near).toBeGreaterThan(near)
+      scene.resize(800, 600)
+      expect(scene.camera.near).toBe(near)
+      expect(scene.camera.far).toBe(far)
+    })
+  })
+
 })

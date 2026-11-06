@@ -87,6 +87,21 @@ export function ndcBounds(camera: THREE.PerspectiveCamera, points: THREE.Vector3
 /** Farthest the search will look. Past this the pane is so small or the valley so large that nothing sensible fits. */
 const MAX_DISTANCE = 1e7
 
+const baseDepth = new WeakMap<THREE.PerspectiveCamera, { near: number; far: number }>()
+
+/**
+ * Set the near and far planes for a camera `d` away from its target. The planes are derived from the camera's original
+ * range and the current distance every time, never from the last values, so a sliver pane that pushed the camera far
+ * back does not leave a large near plane behind once the pane (or the user's zoom) brings it close again.
+ */
+export function setDepthRange(camera: THREE.PerspectiveCamera, d: number): void {
+  let base = baseDepth.get(camera)
+  if (!base) { base = { near: camera.near, far: Math.max(camera.far, 400) }; baseDepth.set(camera, base) }
+  const far = Math.max(base.far, d * 3) // the valley sits within a few creature-widths of the target; 3x leaves it all in front of the far plane
+  const near = d > 1e4 ? d / 1000 : base.near // a sliver pane pushes the camera very far back: keep the depth range usable
+  if (camera.far !== far || camera.near !== near) { camera.far = far; camera.near = near; camera.updateProjectionMatrix() }
+}
+
 /**
  * Put the camera on the fixed viewing direction at the smallest distance where every point fits, then slide the target
  * across the ground so the creatures sit in the middle of the free area (between the header band and the bottom edge)
@@ -98,12 +113,8 @@ export function fitCamera(camera: THREE.PerspectiveCamera, target: THREE.Vector3
   dir = new THREE.Vector3(0.45, 0.5, 0.85), range: [number, number] = [8, 140]): number {
   const lim = ndcLimits(w, h)
   const d0 = dir.clone().normalize()
-  const baseFar = Math.max(camera.far, 400)
-  const baseNear = camera.near
   const place = (d: number) => {
-    const far = Math.max(baseFar, d * 3) // the valley sits within a few creature-widths of the target; 3x leaves it all in front of the far plane
-    const near = d > 1e4 ? d / 1000 : baseNear // a sliver pane pushes the camera very far back: keep the depth range usable
-    if (camera.far !== far || camera.near !== near) { camera.far = far; camera.near = near; camera.updateProjectionMatrix() }
+    setDepthRange(camera, d)
     camera.position.copy(target).addScaledVector(d0, d)
     camera.lookAt(target)
     camera.updateMatrixWorld(true)

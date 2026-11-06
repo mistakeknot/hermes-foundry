@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildCreature, frameAt, layoutCreatures, type CreatureSpec, type LimbSpec, type Material, type V3 } from './creature'
 import { hashString, rng } from './rng'
-import { creaturePoints, fitCamera, LabelPlacer } from './framing'
+import { creaturePoints, fitCamera, LabelPlacer, setDepthRange } from './framing'
 import { claimedWithoutClimber } from './reducer'
 import { dropOutcome, isDrag, type AssignRequest } from './drag'
 import { slipPose } from './slip'
@@ -746,6 +746,7 @@ export class FoundryScene {
       if (this.focus.t >= 1) this.focus = null
     }
     this.controls.update()
+    setDepthRange(this.camera, this.camera.position.distanceTo(this.controls.target)) // follows the user's zoom too
     this.glowTime.value = t
     const pl = pulse(t)
     this.animateClimbers(t, dt)
