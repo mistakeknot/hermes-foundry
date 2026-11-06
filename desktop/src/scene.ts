@@ -938,7 +938,7 @@ export class FoundryScene {
     if (!this.selectionLabel) {
       const el = document.createElement('div')
       el.className = 'foundry-selection-label'
-      el.style.cssText = 'position:absolute;pointer-events:none;font:600 12px var(--dt-font-sans,system-ui);color:#111;background:#f4f1e6;border-radius:4px;padding:2px 7px;box-sizing:border-box;box-shadow:0 1px 6px #000a;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;transform:translate(-50%,-100%)'
+      el.style.cssText = 'position:absolute;pointer-events:none;font:600 12px var(--dt-font-sans,system-ui);color:#111;background:#f4f1e6;border-radius:4px;padding:2px 7px;box-sizing:border-box;width:max-content;box-shadow:0 1px 6px #000a;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;transform:translate(-50%,-100%)'
       this.labelHost.appendChild(el)
       this.selectionLabel = el
     }

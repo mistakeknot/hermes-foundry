@@ -143,12 +143,15 @@ describe('default camera frames every creature', () => {
         scene.positionSelectionLabel(w, h)
         const el = els[els.length - 1]
         const half = parseFloat(el.style.maxWidth) >= 0 ? Math.min(parseFloat(el.style.maxWidth), realW || Infinity) / 2 : 0
-        return { left: parseFloat(el.style.left), half, maxW: parseFloat(el.style.maxWidth) }
+        return { left: parseFloat(el.style.left), half, maxW: parseFloat(el.style.maxWidth), css: String(el.style.cssText) }
       } finally { g.document = prev }
     }
     for (const [w, h] of [[320, 456], [800, 520], [1280, 633]] as [number, number][]) for (const ndcX of [0.99, -0.99, 0]) {
       const r = run(w, h, ndcX, 254) // a long title: the label is as wide as its cap allows
       expect(r.maxW, `${w}`).toBeLessThanOrEqual(w - 8)
+      // its width is its own content width, never the room left to the right of its previous `left` (no jumping at the edge)
+      expect(r.css).toMatch(/width:\s*max-content/)
+      expect(r.css).toMatch(/box-sizing:\s*border-box/)
       expect(r.left - r.half, `${w} ${ndcX} left edge`).toBeGreaterThanOrEqual(0)
       expect(r.left + r.half, `${w} ${ndcX} right edge`).toBeLessThanOrEqual(w)
     }
