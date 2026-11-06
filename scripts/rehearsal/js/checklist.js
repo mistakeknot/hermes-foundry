@@ -37,38 +37,33 @@ if (stage === "floor") {
   const card = cand[0];   // cards already used in earlier trials are assigned now, so the first candidate is a fresh one
   // 1. open the card: click its scale in the 3D scene
   let t0 = now(); await click(card, "pane card"); cost.clicks++;
-  const okOpen = await until("return !!document.getElementById('foundry-status') && document.getElementById('foundry-panel').innerText.includes(a)", card.title);
+  const okOpen = await until("return !!document.getElementById('foundry-status-todo') && document.getElementById('foundry-panel').innerText.includes(a)", card.title);
   steps.push({step: "open", ms: now() - t0, clicks: 1, keys: 0, ok: okOpen});
-  // 2. change status: focus the select, type the first letter of the option, Enter, press Set status
-  let m = mark(); t0 = now(); let method = "keyboard";
-  const sel = await p.evaluate(() => { const r = document.getElementById("foundry-status").getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; });
-  await click(sel); cost.clicks++;
-  await p.keyboard.type(status[0]); cost.keys++;
-  await p.keyboard.press("Enter"); cost.keys++;
-  let got = await p.evaluate(() => document.getElementById("foundry-status").value);
-  if (got !== status) {            // the native select popup swallowed the keys: set the value the way an input event would, count one action
-    method = "setter";
-    await p.evaluate((v) => { const s = document.getElementById("foundry-status"); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(s, v); s.dispatchEvent(new Event("change", {bubbles: true})); }, status);
-  }
-  const ap = await p.evaluate(() => { const r = document.getElementById("foundry-status-apply").getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; });
-  await click(ap); cost.clicks++;
+  // 2. change status: one click on the choice button
+  let m = mark(); let t1 = now();
+  const bt = await p.evaluate((s) => { const e = document.getElementById("foundry-status-" + s); if (!e) return null; const r = e.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; }, status);
+  await click(bt, "status button"); cost.clicks++;
   const ackS = await until("return (document.getElementById('foundry-notice')||{innerText:''}).innerText.includes('Moved to '+a)", status);
-  const tAck = now() - t0;
+  const tAck = now() - t1;
   const noteS = await p.evaluate(() => (document.getElementById("foundry-notice") || {}).innerText || "");
   const refS = await until("const s=window.__foundry.scene; const c=s.snap.projects.flatMap(q=>q.cards).find(c=>c.id===a.id); return c&&c.status_native===a.s", {id: card.id, s: status}, 15000);
-  steps.push({step: "status", ms: tAck, ms_scene: now() - t0, clicks: cost.clicks - m.c, keys: cost.keys - m.k, ok: ackS, scene_ok: refS, select_method: method, notice: noteS});
-  // 3. assign a profile: click the input, type the name, press Assign
-  m = mark(); t0 = now();
-  const inp = await p.evaluate(() => { const r = document.getElementById("foundry-profile").getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; });
-  await click(inp); cost.clicks++;
-  await p.keyboard.type(profile); cost.keys += profile.length;
-  const as = await p.evaluate(() => { const r = document.getElementById("foundry-assign").getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; });
-  await click(as); cost.clicks++;
+  steps.push({step: "status", ms: tAck, ms_scene: now() - t1, clicks: cost.clicks - m.c, keys: cost.keys - m.k, ok: ackS, scene_ok: refS, select_method: "picker-button", notice: noteS});
+  // 3. assign a profile: one click on its choice button if it is offered, otherwise type it into the free-text input and click Assign
+  m = mark(); t1 = now();
+  const pb = await p.evaluate((n) => { const e = [...document.querySelectorAll("button[id^=foundry-profile]")].find(x => x.innerText.trim() === n); if (!e) return null; const r = e.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; }, profile);
+  if (pb) { await click(pb, "profile button"); cost.clicks++; }
+  else {
+    const inp = await p.evaluate(() => { const e = document.getElementById("foundry-profile-new") || document.getElementById("foundry-profile"); if (!e || e.tagName !== "INPUT") return null; const r = e.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; });
+    await click(inp, "profile input"); cost.clicks++;
+    await p.keyboard.type(profile); cost.keys += profile.length;
+    const as = await p.evaluate(() => { const r = document.getElementById("foundry-assign").getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; });
+    await click(as, "assign button"); cost.clicks++;
+  }
   const ackA = await until("return (document.getElementById('foundry-notice')||{innerText:''}).innerText.includes('Assigned to '+a)", profile);
-  const tAckA = now() - t0;
+  const tAckA = now() - t1;
   const noteA = await p.evaluate(() => (document.getElementById("foundry-notice") || {}).innerText || "");
   const refA = await until("const s=window.__foundry.scene; const c=s.snap.projects.flatMap(q=>q.cards).find(c=>c.id===a.id); return c&&c.assignee_profile===a.p", {id: card.id, p: profile}, 15000);
-  steps.push({step: "assign", ms: tAckA, ms_scene: now() - t0, clicks: cost.clicks - m.c, keys: cost.keys - m.k, ok: ackA, scene_ok: refA, notice: noteA});
+  steps.push({step: "assign", ms: tAckA, ms_scene: now() - t1, clicks: cost.clicks - m.c, keys: cost.keys - m.k, ok: ackA, scene_ok: refA, notice: noteA});
   await p.shot({type: "jpeg", maxEdge: 1100, quality: 70});
   out = JSON.stringify({ui: "pane", card: card.title, id: card.id, candidates: cand.length, steps});
 } else {

@@ -272,7 +272,7 @@ def stop_home(st):
         for p in mine:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 if owned(p, hh): os.kill(p, sig)
-        for _ in range(25):
+        for _ in range(100):
             if not any(owned(p, hh) for p in mine): break
             time.sleep(0.2)
     left = owned_pids(hh)
