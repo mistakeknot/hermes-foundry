@@ -1,0 +1,5 @@
+name: foundry
+version: 0.1.0
+description: "A 3D workspace to see and run the software factory: kanban boards as creatures, workers as climbers. Fixture mode needs no model calls or credentials."
+author: "mistakeknot"
+provides_hooks: []

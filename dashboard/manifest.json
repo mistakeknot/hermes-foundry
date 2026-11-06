@@ -1,0 +1,7 @@
+{
+  "name": "foundry",
+  "label": "Foundry",
+  "description": "A 3D workspace to see and run the software factory",
+  "version": "0.1.0",
+  "api": "plugin_api.py"
+}

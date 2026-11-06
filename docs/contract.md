@@ -26,3 +26,24 @@ The pane talks only to `FoundryApi { snapshot(); subscribe(cb); command(c) }`. T
 
 ## Fixture
 3 projects, ~40 cards, 4 workers, one loop (worker looping), one card blocked on a human. A deterministic state machine: each command has a scripted response, `reset` restores the start. Runs with no model calls or credentials. The pane shows a "simulated" badge in fixture mode.
+
+## Wire details (additive; approved by the coordinator, Nov 6)
+Design choice: these fix what the draft left open. No field above is removed or renamed.
+
+**Cursor.** Opaque to clients. The Python side uses `"<epoch>.<seq>"`; `seq` only grows, including across `reset`. A client must treat any cursor it did not get from the server as invalid.
+
+**Events response.** `GET /events?since=<cursor>` returns `{"v":1,"cursor":"<head>","events":[...],"resync":false}`. `resync:true` (with `events:[]`) means refetch the snapshot: the cursor is missing, malformed, from another epoch (server restart) or ahead of the head. A client that applies events and finds a seq gap, or an event that names an unknown card or worker, must also resync. Polling is the baseline; a socket, where one exists, is only an accelerator (it is a no-op on OAuth remotes).
+
+**Event payloads** (the reducer ignores payload keys it does not know and event types it does not know, but still advances seq):
+| type | payload |
+|---|---|
+| `card_created` | `{project_id, card:{...full card}}` (idempotent by card id) |
+| `card_status` | `{card_id, status, blocked_on:"human"\|null, updated_at}` |
+| `card_assigned` | `{card_id, worker_id\|null, updated_at}` |
+| `card_commented` | `{card_id, author, text, updated_at}` (only moves `updated_at`; comments are fetched on demand) |
+| `worker_state` | `{worker_id, name?, state?, card_id?}`: upserts a worker; a key that is present is applied, `state:null` removes the state (the source cannot give it) |
+| `worker_moved` | `{worker_id, card_id\|null}` |
+| `paused` | `{paused:bool}` |
+| `reset` | `{snapshot:{...}}` replaces all state |
+
+**Commands.** Always HTTP 200 with `{ok:bool,error?:string}`; an unknown type, unknown id, bad status, empty text or a refused action gives `ok:false` and emits no event. `reset` on live gives `ok:false`. Fixture rules: assigning a blocked or done card is refused; a done card has no assignee; a comment on a card blocked on a human unblocks it and the waiting worker resumes; `stand{on:true}` refuses new work until `stand{on:false}`.
