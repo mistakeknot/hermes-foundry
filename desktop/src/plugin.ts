@@ -51,6 +51,8 @@ export function panelWidthFor(paneW: number): number {
 }
 /** Under this pane width the header and hint switch to their short forms. */
 export const NARROW_PX = 700
+/** Under this pane height the Comment box scrolls with the card instead of staying pinned: pinned, it would cover most of a short panel. */
+export const SHORT_PX = 440
 
 /** `?foundryScale=N` multiplies the fixture's card count, to exercise the crowded-valley view. */
 function fixtureScale(): number {
@@ -81,16 +83,18 @@ function FoundryPage({ rest }: { rest: Rest }) {
   // the pane's own width (not the window's: Hermes Desktop's chrome takes a share of it) sizes the side panel
   const rootRef = useRef<HTMLDivElement>(null)
   const [paneW, setPaneW] = useState(0)
+  const [paneH, setPaneH] = useState(0)
   useEffect(() => {
     const el = rootRef.current
     if (!el) return
-    const measure = () => setPaneW(el.clientWidth)
+    const measure = () => { setPaneW(el.clientWidth); setPaneH(el.clientHeight) }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
   const narrow = paneW > 0 && paneW < NARROW_PX
+  const shortPane = paneH > 0 && paneH < SHORT_PX
 
   // pick the source once: our router if it answers, otherwise the in-pane fixture
   useEffect(() => { let off = false; pickApi(rest).then((a) => { if (!off) setApi(a) }); return () => { off = true } }, [])
@@ -219,7 +223,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
     h('div', { style: { position: 'absolute', left: 12, right: 12, bottom: 10, font: `${narrow ? 10 : 11}px ${sans}`, color: ON_DARK_MUTED, textShadow: '0 1px 3px #000', pointerEvents: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, narrow ? 'drag orbit · scroll zoom · click to open · double-click a creature' : 'drag to orbit · scroll to zoom · click a scale, carving or climber · double-click a creature to approach'))
 
   const panel = h('div', { id: 'foundry-panel', style: { width: panelWidthFor(paneW), flex: 'none', borderLeft: `1px solid ${C.border}`, background: C.card, color: C.fg, font: `13px ${sans}`, overflowY: 'auto', padding: narrow ? '10px 12px' : '12px 14px' } },
-    snap ? Panel({ snap, state: state!, pick, setPick, run, busyIds, notice, simulated, api: api!, scene: sceneRef, assignReq, clearAssignReq: () => setAssignReq(null) }) : null)
+    snap ? Panel({ snap, state: state!, pick, setPick, run, busyIds, notice, simulated, api: api!, scene: sceneRef, assignReq, clearAssignReq: () => setAssignReq(null), pinComment: !shortPane }) : null)
 
   return h('div', { ref: rootRef, style: { display: 'flex', height: '100%', width: '100%', background: C.bg } }, stage, panel)
 }
@@ -229,6 +233,8 @@ interface PanelProps {
   run(c: Command, ok: string): Promise<boolean>; busyIds: string[]; notice: { text: string; err: boolean; sim: boolean } | null
   simulated: boolean; api: FoundryApi; scene: { current: FoundryScene | null }
   assignReq: AssignRequest | null; clearAssignReq(): void
+  /** keep the Comment box pinned to the bottom of the panel (default); false in a short pane, where it flows with the card */
+  pinComment?: boolean
 }
 
 function Panel(p: PanelProps) {
@@ -328,7 +334,7 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null; no
     comments.length ? h('div', null, sect('Comments'), ...comments.map((c, i) => h('div', { key: i, style: { padding: '3px 0', fontSize: 12 } }, h('b', null, c.author), `: ${c.text}`))) : null,
     // The comment box and the result line stay pinned to the bottom of the panel, so a tall card view in a short pane never
     // pushes them below the fold. Negative margins let the pinned block cover the panel's own padding.
-    h('div', { id: 'foundry-comment-dock', style: { position: 'sticky', bottom: 0, margin: '8px -14px -12px', padding: '0 14px 10px', background: C.card, borderTop: `1px solid ${C.border}` } },
+    h('div', { id: 'foundry-comment-dock', style: p.pinComment === false ? { marginTop: 4 } : { position: 'sticky', bottom: 0, margin: '8px -14px -12px', padding: '0 14px 10px', background: C.card, borderTop: `1px solid ${C.border}` } },
       sect('Comment'),
       h('div', { style: { ...row, flexDirection: 'column', marginTop: 0 } },
         h('textarea', { id: 'foundry-comment', rows: 2, style: { ...field, resize: 'none' }, value: text, placeholder: 'Write a comment…', onChange: (e: any) => setText(e.target.value) }),

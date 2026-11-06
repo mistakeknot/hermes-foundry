@@ -463,3 +463,31 @@ describe('operating a card: one click picks a status or a profile', () => {
   })
 
 })
+
+describe('short pane: the Comment box', () => {
+  async function dockWithPaneHeight(h: number) {
+    const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => h })
+    try {
+      const fx = await new MockApi(Date.now, 3_600_000).snapshot()
+      const card = fx.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
+      const scene = await mount(() => Promise.reject(new Error('no router')))
+      await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+      await dragOnto(scene, fx.workers[0].id, card.id)
+      await waitFor(() => !!document.getElementById('foundry-comment-dock'), 'the card panel')
+      return document.getElementById('foundry-comment-dock') as HTMLElement
+    } finally {
+      if (desc) Object.defineProperty(HTMLElement.prototype, 'clientHeight', desc)
+      else delete (HTMLElement.prototype as any).clientHeight
+    }
+  }
+  it('stays pinned to the bottom of the panel in a normal-height pane', async () => {
+    expect((await dockWithPaneHeight(456)).style.position).toBe('sticky')
+  })
+  it('flows with the card in a 420 px pane too (the 560x420 window)', async () => {
+    expect((await dockWithPaneHeight(420)).style.position).not.toBe('sticky')
+  })
+  it('flows with the card in a pane under 440 px high, so it cannot cover the profile and status rows', async () => {
+    expect((await dockWithPaneHeight(376)).style.position).not.toBe('sticky')
+  })
+})
