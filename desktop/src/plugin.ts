@@ -52,7 +52,7 @@ export function panelWidthFor(paneW: number): number {
 /** Under this pane width the header and hint switch to their short forms. */
 export const NARROW_PX = 700
 /** Under this pane height the Comment box scrolls with the card instead of staying pinned: pinned, it would cover most of a short panel. */
-export const SHORT_PX = 440
+export const SHORT_PX = 500
 
 /** `?foundryScale=N` multiplies the fixture's card count, to exercise the crowded-valley view. */
 function fixtureScale(): number {

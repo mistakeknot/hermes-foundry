@@ -100,6 +100,8 @@ export class FoundryScene {
   private selectionPin = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true }))
   private selectionLabel: HTMLElement | null = null
   private selectionText = ''
+  private selectionMaxW = 0
+  private selectionW = 0
   private raf = 0
   private clock = new THREE.Clock()
   /** shared by every scale material: drives the pulse of a blocked glow */
@@ -936,15 +938,23 @@ export class FoundryScene {
     if (!this.selectionLabel) {
       const el = document.createElement('div')
       el.className = 'foundry-selection-label'
-      el.style.cssText = 'position:absolute;pointer-events:none;font:600 12px var(--dt-font-sans,system-ui);color:#111;background:#f4f1e6;border-radius:4px;padding:2px 7px;box-shadow:0 1px 6px #000a;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;transform:translate(-50%,-100%)'
+      el.style.cssText = 'position:absolute;pointer-events:none;font:600 12px var(--dt-font-sans,system-ui);color:#111;background:#f4f1e6;border-radius:4px;padding:2px 7px;box-sizing:border-box;width:max-content;box-shadow:0 1px 6px #000a;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;transform:translate(-50%,-100%)'
       this.labelHost.appendChild(el)
       this.selectionLabel = el
     }
     const el = this.selectionLabel
-    if (el.textContent !== this.selectionText) el.textContent = this.selectionText
+    // never wider than the canvas, and measured (once per text or width change) so the clamp below uses the real width
+    const maxW = Math.max(40, Math.min(240, w - 8))
+    if (el.textContent !== this.selectionText || maxW !== this.selectionMaxW) {
+      el.textContent = this.selectionText
+      this.selectionMaxW = maxW
+      el.style.maxWidth = `${maxW}px`
+      el.style.display = 'block' // a hidden element measures 0
+      this.selectionW = Math.min(maxW, el.offsetWidth || maxW)
+    }
     this.tmp.copy(p).add(new THREE.Vector3(0, 0.15 + SELECT_PIN, 0)).project(this.camera)
     if (this.tmp.z >= 1) { el.style.display = 'none'; return }
-    const half = Math.min(120, w / 2 - 4)
+    const half = this.selectionW / 2 + 2
     const x = Math.min(Math.max((this.tmp.x * 0.5 + 0.5) * w, half), w - half)
     const y = Math.min(Math.max((-this.tmp.y * 0.5 + 0.5) * h, 76), h - 4)
     el.style.display = 'block'

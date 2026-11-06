@@ -127,6 +127,39 @@ describe('default camera frames every creature', () => {
     expect(dist(scene)).toBeCloseTo(dNarrower * (400 / 300), 4)
   })
 
+  it('the selected-card label stays inside the canvas at either edge and in a narrow pane', () => {
+    const run = (w: number, h: number, ndcX: number, realW: number) => {
+      const els: any[] = []
+      const g = globalThis as any
+      const prev = g.document
+      g.document = { createElement: () => { const e: any = { style: {}, remove() {}, textContent: '', offsetWidth: realW }; els.push(e); return e } }
+      try {
+        const scene = mk(w, h); scene.update(snapshotWith(1)); scene.resize(w, h)
+        scene.selectedCard = 'c'; scene.selectionText = 'Refund reconciliation job · blocked'
+        scene.camera.updateMatrixWorld()
+        const ray = new THREE.Vector3(ndcX, 0, 0.5).unproject(scene.camera).sub(scene.camera.position).normalize()
+        const spot = scene.camera.position.clone().addScaledVector(ray, scene.camera.position.distanceTo(scene.controls.target)) // a point at the pane's x edge
+        scene.cardWorldPos = () => spot
+        scene.positionSelectionLabel(w, h)
+        const el = els[els.length - 1]
+        const half = parseFloat(el.style.maxWidth) >= 0 ? Math.min(parseFloat(el.style.maxWidth), realW || Infinity) / 2 : 0
+        return { left: parseFloat(el.style.left), half, maxW: parseFloat(el.style.maxWidth), css: String(el.style.cssText) }
+      } finally { g.document = prev }
+    }
+    for (const [w, h] of [[320, 456], [800, 520], [1280, 633]] as [number, number][]) for (const ndcX of [0.99, -0.99, 0]) {
+      const r = run(w, h, ndcX, 254) // a long title: the label is as wide as its cap allows
+      expect(r.maxW, `${w}`).toBeLessThanOrEqual(w - 8)
+      // its width is its own content width, never the room left to the right of its previous `left` (no jumping at the edge)
+      expect(r.css).toMatch(/width:\s*max-content/)
+      expect(r.css).toMatch(/box-sizing:\s*border-box/)
+      expect(r.left - r.half, `${w} ${ndcX} left edge`).toBeGreaterThanOrEqual(0)
+      expect(r.left + r.half, `${w} ${ndcX} right edge`).toBeLessThanOrEqual(w)
+    }
+    const small = run(320, 456, 0.99, 120) // a short title is measured, so it sits closer to the edge than a long one
+    expect(small.left + small.half).toBeLessThanOrEqual(320)
+    expect(small.left).toBeGreaterThan(run(320, 456, 0.99, 254).left)
+  })
+
   it('a resize reframes until the user moves the camera, then leaves the view alone', () => {
     const scene = mk(); scene.update(snapshotWith(3)); scene.resize(1280, 633)
     const first = scene.camera.position.clone()
