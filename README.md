@@ -25,8 +25,13 @@ Hermes marks the copy in `desktop-plugins/foundry` as not enabled by default, so
 hidden until the user turns it on. Where the build exposes it, turn it on under Capabilities > Plugins. Some
 builds (checked on Hermes b524c8a4) list only the catalog there, with the backend marked "needs setup", and show no
 Foundry entry. The fallback, verified on a fresh install, is the same browser setting the toggle writes: in the
-Webapp's browser storage, set `hermes.desktop.pluginDecisions.v2` to `{"foundry":true}` and reload. The host copies
-the desktop half to `desktop-plugins/foundry` on the first Webapp request after the agent half is enabled.
+Webapp's browser storage, set the `foundry` key to `true` in `hermes.desktop.pluginDecisions.v2` and reload. That key
+holds every plugin's decision, so merge into it; do not replace it. In the browser console:
+
+    k = "hermes.desktop.pluginDecisions.v2";
+    localStorage.setItem(k, JSON.stringify({...JSON.parse(localStorage.getItem(k) || "{}"), foundry: true}));
+
+The host copies the desktop half to `desktop-plugins/foundry` on the first Webapp request after the agent half is enabled.
 Nothing in this repo can change that default.
 Hermes copies the whole `desktop/` directory into `desktop-plugins/foundry`; only `plugin.js` is used at runtime.
 `scripts/install_gate.sh` checks the router only and does not exercise the pane.
