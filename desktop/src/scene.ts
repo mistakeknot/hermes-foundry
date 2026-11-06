@@ -6,14 +6,15 @@ import { hashString, rng } from './rng'
 import { claimedWithoutClimber } from './reducer'
 import { dropOutcome, isDrag, type AssignRequest } from './drag'
 import { slipPose } from './slip'
+import { knownStatus, pulse, SCALE_K, STATUS_LOOK } from './status-look'
 import type { Card, Project, Snapshot, Worker } from './types'
 
 export const STATUS_COLOR: Record<Card['status'], number> = {
-  open: 0xd2c9ae, // bone
-  running: 0xe6a93c, // amber
-  blocked: 0xc2483a, // rust
-  review: 0x7f8bdc, // dusk blue
-  done: 0x5b8a57, // moss
+  open: 0xd8d0b4, // bone
+  running: 0xf2b134, // amber
+  blocked: 0xff5436, // ember: the glowing one
+  review: 0x8c9cff, // dusk blue
+  done: 0x73876a, // moss stone
   unknown: 0x7d7d7d, // grey
 }
 export const WORKER_COLOR: Record<Worker['state'], number> = {
@@ -47,6 +48,8 @@ interface CreatureView {
   center: THREE.Vector3
   scales: THREE.InstancedMesh
   claims: THREE.InstancedMesh // ring over each scale whose card is claimed by a worker that is not climbing it
+  halo: THREE.InstancedMesh // additive glow around each scale whose status asks for one (blocked)
+  scalePose: { pos: THREE.Vector3; q: THREE.Quaternion; nrm: THREE.Vector3; k: number }[]
   scaleIds: string[]
   scaleBase: THREE.Matrix4[]
   bands: THREE.Group // aggregate status bands per limb (zoomed-out view)
@@ -84,6 +87,8 @@ export class FoundryScene {
   private selection = new THREE.Mesh(new THREE.TorusGeometry(1, 0.08, 8, 24), new THREE.MeshBasicMaterial({ color: 0xffffff }))
   private raf = 0
   private clock = new THREE.Clock()
+  /** shared by every scale material: drives the pulse of a blocked glow */
+  private glowTime = { value: 0 }
   private snap: Snapshot | null = null
   private totalCards = 0
   private selectedCard: string | null = null
@@ -259,9 +264,17 @@ export class FoundryScene {
     const allScales = spec.limbs.flatMap((l) => l.scales)
     const scaleGeo = new THREE.CylinderGeometry(0.5, 0.42, 0.22, 6)
     scaleGeo.translate(0, 0.08, 0)
-    const scales = new THREE.InstancedMesh(scaleGeo, new THREE.MeshStandardMaterial({ roughness: 0.55, flatShading: true }), Math.max(allScales.length, 1))
+    // per-scale glow and stone-ness ride on instanced attributes; the material lights itself with its own colour
+    const nScale = Math.max(allScales.length, 1)
+    const aGlow = new THREE.InstancedBufferAttribute(new Float32Array(nScale), 1)
+    const aStone = new THREE.InstancedBufferAttribute(new Float32Array(nScale), 1)
+    scaleGeo.setAttribute('aGlow', aGlow)
+    scaleGeo.setAttribute('aStone', aStone)
+    const scaleMat = this.statusMaterial()
+    const scales = new THREE.InstancedMesh(scaleGeo, scaleMat, nScale)
     scales.count = allScales.length
     const scaleBase: THREE.Matrix4[] = []
+    const scalePose: CreatureView['scalePose'] = []
     const scaleIds: string[] = []
     const up = new THREE.Vector3(0, 1, 0)
     const q = new THREE.Quaternion()
@@ -300,11 +313,14 @@ export class FoundryScene {
         limbOf.set(s.cardId, limb)
         const nrm = new THREE.Vector3(...s.normal)
         q.setFromUnitVectors(up, nrm)
-        m.compose(new THREE.Vector3(s.pos[0], s.pos[1] + lift, s.pos[2]), q, new THREE.Vector3(s.size * 1.15, s.size * 1.15, s.size * 1.15))
-        scales.setMatrixAt(si, m)
+        const k = s.size * SCALE_K
+        const pos = new THREE.Vector3(s.pos[0], s.pos[1] + lift, s.pos[2])
+        m.compose(pos, q, new THREE.Vector3(k, k, k))
+        scales.setMatrixAt(si, m) // recolor() re-poses it for the card's status
         scaleBase.push(m.clone())
+        scalePose.push({ pos, q: q.clone(), nrm: nrm.clone(), k })
         scaleIds.push(s.cardId)
-        cardPos.set(s.cardId, new THREE.Vector3(s.pos[0], s.pos[1] + lift, s.pos[2]).add(center).add(nrm.clone().multiplyScalar(s.size * 0.3)))
+        cardPos.set(s.cardId, pos.clone().add(center).add(nrm.clone().multiplyScalar(s.size * 0.5)))
         si++
       }
     }
@@ -319,6 +335,15 @@ export class FoundryScene {
     claims.userData = { kind: 'claims', project: spec.projectId }
     claims.raycast = () => {} // a marker, not a pick target: clicks fall through to the scale
     group.add(claims)
+    // halo: a soft additive bubble around each blocked scale, pulsing, so blocked glows from far away
+    const haloGeo = new THREE.IcosahedronGeometry(1, 1)
+    const haloMat = new THREE.MeshBasicMaterial({ color: STATUS_COLOR.blocked, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false })
+    const halo = new THREE.InstancedMesh(haloGeo, haloMat, nScale)
+    halo.count = allScales.length
+    halo.userData = { kind: 'halo', project: spec.projectId }
+    halo.raycast = () => {} // not a pick target: clicks fall through to the scale
+    halo.renderOrder = 2
+    group.add(halo)
     // carvings: three glyph shapes, instanced, darker inset into the limb
     const glyphGeos = [new THREE.TorusGeometry(0.5, 0.12, 5, 10), new THREE.BoxGeometry(0.9, 0.16, 0.16), new THREE.OctahedronGeometry(0.5)]
     const carvingMeshes: THREE.InstancedMesh[] = []
@@ -340,21 +365,72 @@ export class FoundryScene {
       group.add(im)
       carvingMeshes.push(im); carvingInfo.push(info)
     })
-    return { spec, key, group, center, scales, claims, scaleIds, scaleBase, bands, carvingMeshes, carvingInfo, torso, labels, cardPos, limbOf }
+    return { spec, key, group, center, scales, claims, halo, scalePose, scaleIds, scaleBase, bands, carvingMeshes, carvingInfo, torso, labels, cardPos, limbOf }
+  }
+
+  /** Scale material: standard lighting plus per-instance self-light (aGlow) and weathering (aStone). */
+  private statusMaterial(): THREE.MeshStandardMaterial {
+    const mat = new THREE.MeshStandardMaterial({ roughness: 0.6, flatShading: true })
+    const time = this.glowTime
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = time
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aGlow;\nattribute float aStone;\nvarying float vGlow;\nvarying float vStone;\nvarying vec3 vLocal;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = aGlow;\nvStone = aStone;\nvLocal = position;')
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uTime;\nvarying float vGlow;\nvarying float vStone;\nvarying vec3 vLocal;')
+        .replace('#include <color_fragment>', `#include <color_fragment>
+        if (vStone > 0.0) {
+          // weather to stone: grey the colour, darken it, speckle it (speckle is fixed to the hex, so it does not shimmer)
+          float sp = fract(sin(dot(floor(vLocal * 7.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+          vec3 grey = vec3(dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)));
+          diffuseColor.rgb = mix(diffuseColor.rgb, grey * vec3(0.96, 0.97, 1.0), vStone * 0.55) * (1.0 - vStone * (0.12 + 0.3 * sp));
+        }`)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        if (vGlow > 0.0) {
+          float g = vGlow;
+          if (g > 1.0) g *= 1.0 + 0.2 * sin(uTime * 2.6);
+          totalEmissiveRadiance += diffuseColor.rgb * g;
+        }`)
+    }
+    mat.customProgramCacheKey = () => 'foundry-status-scale'
+    return mat
   }
 
   private recolor(v: CreatureView, cards: Card[], workers: Worker[]) {
     const byId = new Map(cards.map((c) => [c.id, c]))
     const col = new THREE.Color()
     const hidden = new THREE.Matrix4().makeScale(0, 0, 0)
+    const m = new THREE.Matrix4()
+    const sc = new THREE.Vector3()
+    const at = new THREE.Vector3()
+    const aGlow = v.scales.geometry.getAttribute('aGlow') as THREE.BufferAttribute
+    const aStone = v.scales.geometry.getAttribute('aStone') as THREE.BufferAttribute
     v.scaleIds.forEach((id, i) => {
       const c = byId.get(id)
-      col.setHex(STATUS_COLOR[c?.status ?? 'unknown'])
+      const st = knownStatus(c?.status)
+      const look = STATUS_LOOK[st]
+      const pose = v.scalePose[i]
+      col.setHex(STATUS_COLOR[st])
       v.scales.setColorAt(i, col)
-      v.claims.setMatrixAt(i, c && claimedWithoutClimber(c, workers) ? v.scaleBase[i] : hidden)
+      aGlow.setX(i, look.glow)
+      aStone.setX(i, look.stone)
+      // status sets the size: wide and tall for the loud ones, low and flat for done
+      v.scales.setMatrixAt(i, m.compose(pose.pos, pose.q, sc.set(pose.k * look.w, pose.k * look.h, pose.k * look.w)))
+      // claim ring rides on top of whatever the scale is
+      const ringK = pose.k * look.w
+      at.copy(pose.pos).addScaledVector(pose.nrm, Math.max(0, 0.19 * pose.k * look.h - 0.19 * ringK))
+      v.claims.setMatrixAt(i, c && claimedWithoutClimber(c, workers) ? m.compose(at, pose.q, sc.set(ringK, ringK, ringK)) : hidden)
+      // halo: only for statuses that glow wide, sat just off the limb under the scale
+      at.copy(pose.pos).addScaledVector(pose.nrm, 0.2 * pose.k * look.h)
+      v.halo.setMatrixAt(i, look.halo ? m.compose(at, pose.q, sc.setScalar(pose.k * 1.25)) : hidden)
     })
     if (v.scales.instanceColor) v.scales.instanceColor.needsUpdate = true
+    v.scales.instanceMatrix.needsUpdate = true
+    aGlow.needsUpdate = true
+    aStone.needsUpdate = true
     v.claims.instanceMatrix.needsUpdate = true
+    v.halo.instanceMatrix.needsUpdate = true
   }
 
   private disposeCreature(v: CreatureView) {
@@ -600,6 +676,8 @@ export class FoundryScene {
       if (this.focus.t >= 1) this.focus = null
     }
     this.controls.update()
+    this.glowTime.value = t
+    const pl = pulse(t)
     this.animateClimbers(t, dt)
     // legibility: past ~100 cards show scales only for creatures near the camera, aggregate bands otherwise
     for (const v of this.creatures.values()) {
@@ -607,6 +685,8 @@ export class FoundryScene {
       const on = showScales(this.totalCards, dist, v.spec.radius)
       v.scales.visible = on
       v.claims.visible = on
+      v.halo.visible = on
+      ;(v.halo.material as THREE.MeshBasicMaterial).opacity = 0.13 * pl + 0.08
       v.bands.visible = !on
     }
     this.renderer.render(this.scene, this.camera)
