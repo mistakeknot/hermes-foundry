@@ -23,6 +23,8 @@ Every function returns new state and never mutates its input.
 from __future__ import annotations
 
 import copy
+import re
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 EVENT_TYPES = ("card_upsert", "card_removed", "comment_added", "worker_upsert", "worker_removed", "paused")
@@ -40,7 +42,7 @@ def parse_cursor(cursor: str | None) -> tuple[str, int] | None:
     if not isinstance(cursor, str) or "." not in cursor:
         return None
     epoch, _, seq = cursor.rpartition(".")
-    if not epoch or not seq.isdigit():
+    if not epoch or not re.fullmatch(r"[0-9]{1,15}", seq):  # ASCII digits only, bounded: no "²", no huge ints
         return None
     return epoch, int(seq)
 
@@ -98,15 +100,31 @@ def _locate(snap: dict[str, Any], card_id: Any) -> tuple[dict[str, Any], int] | 
     return None
 
 
+_NEVER = float("-inf")
+
+
+def _instant(stamp: Any) -> float:
+    """An RFC3339 timestamp as a UTC instant (offsets and fractional seconds honoured). Unparseable: oldest."""
+    if not isinstance(stamp, str):
+        return _NEVER
+    try:
+        dt = datetime.fromisoformat(stamp.strip().replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError:
+        return _NEVER
+    if dt.tzinfo is None:  # RFC3339 requires an offset; a naive stamp is not one
+        return _NEVER
+    return dt.astimezone(timezone.utc).timestamp()
+
+
 def _derive_worker_cards(snap: dict[str, Any]) -> None:
     """A worker holds at most one card: the one with the latest ``updated_at`` (ties: greatest card id).
     Other cards naming it keep ``claimed_by``. A claim naming a worker not in ``workers`` holds nothing."""
-    best: dict[str, tuple[str, str]] = {}
+    best: dict[str, tuple[float, str]] = {}
     for p in snap["projects"]:
         for c in p["cards"]:
             wid = c.get("claimed_by")
             if wid:
-                key = (c.get("updated_at") or "", c["id"])
+                key = (_instant(c.get("updated_at")), c["id"])
                 if wid not in best or key > best[wid]:
                     best[wid] = key
     for w in snap["workers"]:

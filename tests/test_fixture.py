@@ -291,3 +291,25 @@ def test_transcript_limit_cap_and_line_cut():
     t = f.transcript("fx:1", limit=10_000)
     assert len(t["lines"]) == 200 and t["truncated"] is True
     assert all(len(ln["text"]) <= 2000 for ln in t["lines"])
+
+
+def test_reset_replays_identically_to_a_fresh_start():
+    script = [{"type": "claim", "card_id": "atlas:t04", "worker_id": "fx:4"},
+              {"type": "comment", "card_id": "atlas:t04", "text": "hi"},
+              {"type": "stand", "on": True}, {"type": "stand", "on": False}]
+
+    def run(f):
+        f.command({"type": "reset"}) if f._seq else None
+        base = f.snapshot()["cursor"]
+        for c in script:
+            f.command(c)
+        evs = f.events(base)["events"]
+        snap = f.snapshot()
+        return evs, {k: v for k, v in snap.items() if k not in ("epoch", "cursor")}
+
+    fresh = run(FixtureSource())
+    f = FixtureSource()
+    run(f)  # advance the clock, then reset and replay
+    f.command({"type": "reset"})
+    again = run(f)
+    assert again == fresh  # timestamps included: the tick restarts with the epoch

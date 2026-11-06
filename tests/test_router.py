@@ -75,3 +75,30 @@ def test_transcript_route(client):
                        params={"worker_id": "fx:3", "limit": 3, "before": body["next_before"]}).json()
     assert [ln["seq"] for ln in older["lines"]] == [2, 3, 4]
     assert client.get("/api/plugins/foundry/transcript", params={"worker_id": "nope"}).status_code == 404
+
+
+@pytest.mark.parametrize("cmd", [
+    {"type": "assign", "card_id": ["atlas:t04"], "profile": "coder"},
+    {"type": "assign", "card_id": {"a": 1}, "profile": "coder"},
+    {"type": "assign", "card_id": "atlas:t04", "profile": ["coder"]},
+    {"type": "set_status", "card_id": 5, "status_native": "todo"},
+    {"type": "set_status", "card_id": "atlas:t04", "status_native": ["todo"]},
+    {"type": "comment", "card_id": None, "text": "x"},
+    {"type": "claim", "card_id": "atlas:t04", "worker_id": ["fx:1"]},
+    {"type": "claim", "card_id": [], "worker_id": "fx:1"},
+    {"type": "message", "worker_id": {"x": 1}, "text": "hi"},
+    {"type": "new_worker", "card_id": ["atlas:t04"]},
+])
+def test_non_string_fields_are_ok_false_and_change_nothing(client, cmd):
+    base = "/api/plugins/foundry"
+    before = client.get(f"{base}/snapshot").json()
+    r = client.post(f"{base}/command", json=cmd)
+    assert r.status_code == 200 and r.json()["ok"] is False and r.json()["error"]
+    assert client.get(f"{base}/snapshot").json() == before
+    assert client.get(f"{base}/events", params={"since": before["cursor"]}).json()["events"] == []
+
+
+def test_garbage_cursor_over_http_is_resync(client):
+    for since in ("e.²", "x." + "9" * 5000):
+        r = client.get("/api/plugins/foundry/events", params={"since": since})
+        assert r.status_code == 200 and r.json()["resync"] is True

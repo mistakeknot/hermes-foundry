@@ -37,6 +37,8 @@ class _Plan:
 
     # -- reads (always through the working copy) --------------------------------
     def card(self, card_id: Any) -> dict[str, Any]:
+        if not isinstance(card_id, str):
+            raise _Reject("card_id must be a string")
         if card_id in self._cards:
             return self._cards[card_id][1]
         for p in self._snap["projects"]:
@@ -47,6 +49,8 @@ class _Plan:
         raise _Reject(f"no such card: {card_id}")
 
     def worker(self, worker_id: Any) -> dict[str, Any]:
+        if not isinstance(worker_id, str):
+            raise _Reject("worker_id must be a string")
         if worker_id in self._workers:
             return self._workers[worker_id][1]
         for w in self._snap["workers"]:
@@ -163,6 +167,7 @@ class FixtureSource:
     def _start(self) -> None:
         """(Re)build the start state under a fresh epoch."""
         self._generation += 1
+        self._tick = 0  # a reset replays the same timestamps as a fresh start (epoch aside)
         self._events: list[dict[str, Any]] = []
         self._seq = 0
         self._comments: dict[str, list[dict[str, str]]] = {}
@@ -247,7 +252,7 @@ class FixtureSource:
         """Assigns a profile only. It never claims the card."""
         card = plan.card(cmd.get("card_id"))
         profile = cmd.get("profile")
-        if profile is not None and profile not in fd.PROFILES:
+        if profile is not None and (not isinstance(profile, str) or profile not in fd.PROFILES):
             raise _Reject(f"unknown profile: {profile!r}")
         if card["status"] == "done":
             raise _Reject("card is done")
@@ -256,7 +261,7 @@ class FixtureSource:
     def _cmd_set_status(self, cmd: dict[str, Any], plan: _Plan) -> None:
         card = plan.card(cmd.get("card_id"))
         native = cmd.get("status_native")
-        if native not in fd.MANUAL_STATUSES:
+        if not isinstance(native, str) or native not in fd.MANUAL_STATUSES:
             raise _Reject(f"not a manual move: {native!r}")
         if native == card["status_native"]:
             return

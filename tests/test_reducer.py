@@ -219,3 +219,44 @@ def test_worker_removed_clears_claimed_by_on_its_cards():
     st = apply_event(st, ev(1, "worker_removed", worker_id="fx:1"))
     assert card(st, T03)["claimed_by"] is None
     assert all(w["id"] != "fx:1" for w in st["snapshot"]["workers"])
+
+
+def test_cursor_parse_rejects_non_ascii_and_oversized_digits():
+    assert parse_cursor("e.12") == ("e", 12)
+    assert parse_cursor("e.²") is None  # superscript two passes str.isdigit() but not int()
+    assert parse_cursor("e.٣") is None  # Arabic-indic digit: not ASCII
+    assert parse_cursor("e." + "9" * 16) is None  # bounded length
+    assert parse_cursor("e." + "9" * 5000) is None
+    assert parse_cursor("e.") is None and parse_cursor(".5") is None and parse_cursor(None) is None
+    assert parse_cursor("e.1.2") == ("e.1", 2)
+
+
+def test_tie_break_compares_instants_not_strings():
+    # 03:00+02:00 is 01:00Z, earlier than 02:00Z although the string sorts later.
+    st = base()
+    st = apply_event(st, upsert(1, st, "atlas:t04", claimed_by="fx:4", updated_at="2026-11-06T03:00:00+02:00"))
+    st = apply_event(st, upsert(2, st, "atlas:t07", claimed_by="fx:4", updated_at="2026-11-06T02:00:00Z"))
+    assert worker(st, "fx:4")["card_id"] == "atlas:t07"
+
+
+def test_tie_break_fractional_seconds():
+    st = base()
+    st = apply_event(st, upsert(1, st, "atlas:t07", claimed_by="fx:4", updated_at="2026-11-06T02:00:00Z"))
+    st = apply_event(st, upsert(2, st, "atlas:t04", claimed_by="fx:4", updated_at="2026-11-06T02:00:00.5Z"))
+    assert worker(st, "fx:4")["card_id"] == "atlas:t04"  # newer by half a second, though its id is smaller
+
+
+def test_newer_card_with_smaller_id_beats_older_with_greater_id():
+    st = base()
+    st = apply_event(st, upsert(1, st, "atlas:t07", claimed_by="fx:4", updated_at="2026-11-06T01:00:00Z"))
+    st = apply_event(st, upsert(2, st, "atlas:t04", claimed_by="fx:4", updated_at="2026-11-06T02:00:00Z"))
+    assert worker(st, "fx:4")["card_id"] == "atlas:t04"
+
+
+def test_unparseable_updated_at_is_oldest():
+    st = base()
+    st = apply_event(st, upsert(1, st, "atlas:t07", claimed_by="fx:4", updated_at="not a time"))
+    st = apply_event(st, upsert(2, st, "atlas:t04", claimed_by="fx:4", updated_at="2020-01-01T00:00:00Z"))
+    assert worker(st, "fx:4")["card_id"] == "atlas:t04"
+    st = apply_event(st, upsert(3, st, "atlas:t09", claimed_by="fx:4", updated_at="2026-11-06T09:00:00"))  # no offset
+    assert worker(st, "fx:4")["card_id"] == "atlas:t04"
