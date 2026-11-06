@@ -5,7 +5,7 @@ State is a plain dict::
     {"snapshot": <contract snapshot without epoch/cursor/last_seq>, "epoch": str, "seq": int, "resync": bool}
 
 ``seq`` is the watermark: the snapshot's ``last_seq``, raised as events apply.
-Rules (docs/contract.md, draft 3, "Events"):
+Rules (docs/contract.md, draft 4, "Events"):
   * events apply in seq order; an event with seq <= the watermark is a duplicate or replay and is ignored;
   * seq need not be contiguous: there is no gap detection (completeness is the server's job, via resync);
   * events carry whole objects (card_upsert, worker_upsert), so applying one is a replace;
