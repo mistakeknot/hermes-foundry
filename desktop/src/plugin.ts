@@ -27,14 +27,16 @@ const ON_DARK = '#eef2e6'
 const ON_DARK_MUTED = '#b8c2b6'
 const hex = (n: number) => '#' + n.toString(16).padStart(6, '0')
 const NATIVE_CHOICES = ['todo', 'ready', 'running', 'blocked', 'review', 'done']
+/** how long a status/assign choice stays disabled waiting for the board to show the new value */
+const RECONCILE_MS = 4000
 
 const btn = (primary = false): Record<string, unknown> => ({
   font: `12px ${sans}`, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
   border: `1px solid ${primary ? C.primary : C.border}`, background: primary ? C.primary : 'transparent', color: primary ? '#1a1a14' : C.fg,
 })
 /** One-click choice: the current value is marked (and ignores clicks, but stays focusable), anything else acts on click. */
-const choiceBtn = (id: string, label: string, current: boolean, onClick: () => unknown, ref?: unknown) =>
-  h('button', { id, ref, key: id, 'aria-pressed': current, onClick: current ? undefined : onClick, style: { ...btn(current), opacity: current ? 0.85 : 1, cursor: current ? 'default' : 'pointer' } }, label)
+const choiceBtn = (id: string, label: string, current: boolean, busy: boolean, onClick: () => unknown, ref?: unknown) =>
+  h('button', { id, ref, key: id, 'aria-pressed': current, disabled: busy, onClick: current || busy ? undefined : onClick, style: { ...btn(current), opacity: current ? 0.85 : busy ? 0.5 : 1, cursor: current ? 'default' : busy ? 'wait' : 'pointer' } }, label)
 const field: Record<string, unknown> = { font: `12px ${sans}`, padding: '5px 8px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg, color: C.fg, minWidth: 0 }
 const chip = (color: string): Record<string, unknown> => ({ display: 'inline-block', padding: '1px 8px', borderRadius: 10, background: color, color: '#16160f', font: `600 11px ${sans}` })
 const sect = (t: string) => h('div', { style: { font: `600 10px ${sans}`, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.muted, margin: '14px 0 6px' } }, t)
@@ -119,12 +121,45 @@ function FoundryPage({ rest }: { rest: Rest }) {
 
   const simulated = !!api?.simulated || snap?.mode === 'fixture'
 
+  // One status/assign command per card at a time. The guard is a ref (set before the first await, so a double click
+  // cannot slip past a render), and it holds until the board shows the new value, or RECONCILE_MS passes.
+  const [busyMap] = useState(() => new Map<string, { match?: (c: Card) => boolean; timer?: ReturnType<typeof setTimeout> }>())
+  const [busyIds, setBusyIds] = useState<string[]>([])
+  const release = (id: string) => {
+    const e = busyMap.get(id)
+    if (!e) return
+    if (e.timer) clearTimeout(e.timer)
+    busyMap.delete(id)
+    setBusyIds([...busyMap.keys()])
+  }
+  useEffect(() => {
+    if (!snap) return
+    for (const [id, e] of [...busyMap]) { if (!e.match) continue; const c = findCard(snap, id); if (!c || e.match(c)) release(id) }
+  }, [snap])
+  useEffect(() => () => { busyMap.forEach((e) => { if (e.timer) clearTimeout(e.timer) }); busyMap.clear() }, [])
+
   const run = async (c: Command, okText: string): Promise<boolean> => {
     if (!api) return false
+    const guarded = c.type === 'set_status' || c.type === 'assign' ? c.card_id : null
+    if (guarded) {
+      if (busyMap.has(guarded)) return false // a command for this card is still settling
+      busyMap.set(guarded, {})
+      setBusyIds([...busyMap.keys()])
+    }
     let r: { ok: boolean; error?: string }
     try { r = await api.command(c) } catch (e) { r = { ok: false, error: e instanceof Error ? e.message : String(e) } }
     // a failed command changes no state: show the error, do not touch the display
     setNotice({ text: r.ok ? okText : r.error ?? 'command failed', err: !r.ok, sim: simulated })
+    if (guarded) {
+      const e = busyMap.get(guarded)
+      if (!r.ok || !e) release(guarded)
+      else {
+        e.match = c.type === 'set_status' ? (k) => k.status_native === c.status_native : (k) => k.assignee_profile === (c as Extract<Command, { type: 'assign' }>).profile
+        e.timer = setTimeout(() => release(guarded), RECONCILE_MS)
+        const cur = snapRef.current ? findCard(snapRef.current, guarded) : undefined
+        if (cur && e.match(cur)) release(guarded)
+      }
+    }
     if (r.ok) syncRef.current?.poll() // the upsert / comment_added events arrive on the next poll
     return r.ok
   }
@@ -157,14 +192,14 @@ function FoundryPage({ rest }: { rest: Rest }) {
     h('div', { style: { position: 'absolute', left: 12, bottom: 10, font: `11px ${sans}`, color: ON_DARK_MUTED, textShadow: '0 1px 3px #000', pointerEvents: 'none' } }, 'drag to orbit · scroll to zoom · click a scale, carving or climber · double-click a creature to approach'))
 
   const panel = h('div', { id: 'foundry-panel', style: { width: 330, flex: 'none', borderLeft: `1px solid ${C.border}`, background: C.card, color: C.fg, font: `13px ${sans}`, overflowY: 'auto', padding: '12px 14px' } },
-    snap ? Panel({ snap, state: state!, pick, setPick, run, notice, simulated, api: api!, scene: sceneRef, assignReq, clearAssignReq: () => setAssignReq(null) }) : null)
+    snap ? Panel({ snap, state: state!, pick, setPick, run, busyIds, notice, simulated, api: api!, scene: sceneRef, assignReq, clearAssignReq: () => setAssignReq(null) }) : null)
 
   return h('div', { style: { display: 'flex', height: '100%', width: '100%', background: C.bg } }, stage, panel)
 }
 
 interface PanelProps {
   snap: NonNullable<PaneState['snap']>; state: PaneState; pick: Pick | null; setPick(p: Pick | null): void
-  run(c: Command, ok: string): Promise<boolean>; notice: { text: string; err: boolean; sim: boolean } | null
+  run(c: Command, ok: string): Promise<boolean>; busyIds: string[]; notice: { text: string; err: boolean; sim: boolean } | null
   simulated: boolean; api: FoundryApi; scene: { current: FoundryScene | null }
   assignReq: AssignRequest | null; clearAssignReq(): void
 }
@@ -210,7 +245,7 @@ function Overview(p: PanelProps) {
 function CardView(p: PanelProps & { card: Card }) {
   const { card, snap } = p
   const holder = card.claimed_by ? snap.workers.find((w) => w.id === card.claimed_by) : null
-  return h(CardActions, { ...p, holderName: holder?.name ?? null } as unknown as Record<string, unknown>)
+  return h(CardActions, { ...p, key: card.id, holderName: holder?.name ?? null } as unknown as Record<string, unknown>)
 }
 
 function CardActions(p: PanelProps & { card: Card; holderName: string | null }) {
@@ -230,6 +265,7 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null }) 
     snap.projects.forEach((x) => x.cards.forEach((c) => { if (c.assignee_profile) s.add(c.assignee_profile) }))
     return [...s].sort()
   }, [snap, p.simulated])
+  const busy = p.busyIds.includes(card.id)
   const assign = (name: string) => p.run({ type: 'assign', card_id: card.id, profile: name },
     // Hermes' dispatcher may start a ready card once it has a profile, so the live notice must not promise it will not
     p.simulated ? `Assigned to ${name} (does not start work)` : `Assigned to ${name}. Foundry does not claim or start the card; Hermes may start it once assigned.`)
@@ -249,15 +285,15 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null }) 
     ...card.docs.map((d) => h('div', { key: d.path, style: { padding: '2px 0', cursor: 'pointer', color: C.primary }, onClick: () => setPick({ kind: 'doc', cardId: card.id, path: d.path, title: d.title }) }, `▫ ${d.title}`)),
     sect('Move to'),
     h('div', { style: row, role: 'group', 'aria-label': 'Set status' },
-      ...choices.map((n) => choiceBtn(`foundry-status-${n}`, n, n === card.status_native, () => p.run({ type: 'set_status', card_id: card.id, status_native: n }, `Moved to ${n}`)))),
+      ...choices.map((n) => choiceBtn(`foundry-status-${n}`, n, n === card.status_native, busy, () => p.run({ type: 'set_status', card_id: card.id, status_native: n }, `Moved to ${n}`)))),
     sect('Assign profile'),
     profiles.length
       ? h('div', { style: row, role: 'group', 'aria-label': 'Assign profile' },
-        ...profiles.map((n, i) => choiceBtn(i === 0 ? 'foundry-profile' : `foundry-profile-${n}`, n, n === card.assignee_profile, () => assign(n), i === 0 ? profileRef : undefined)))
+        ...profiles.map((n, i) => choiceBtn(i === 0 ? 'foundry-profile' : `foundry-profile-${n}`, n, n === card.assignee_profile, busy, () => assign(n), i === 0 ? profileRef : undefined)))
       // no profile is known yet (a live board with nothing assigned): the name has to be typed once
       : h('div', { style: row },
         h('input', { id: 'foundry-profile', ref: profileRef, style: { ...field, flex: 1 }, value: profile, placeholder: 'profile', onChange: (e: any) => setProfile(e.target.value) }),
-        h('button', { id: 'foundry-assign', style: btn(true), disabled: !profile.trim(), onClick: () => assign(profile.trim()) }, 'Assign')),
+        h('button', { id: 'foundry-assign', style: btn(true), disabled: busy || !profile.trim(), onClick: () => assign(profile.trim()) }, 'Assign')),
     sect('Comment'),
     comments.length ? h('div', null, ...comments.map((c, i) => h('div', { key: i, style: { padding: '3px 0', fontSize: 12 } }, h('b', null, c.author), `: ${c.text}`))) : null,
     h('div', { style: { ...row, flexDirection: 'column' } },

@@ -313,4 +313,93 @@ describe('operating a card: one click picks a status or a profile', () => {
     await click('foundry-assign')
     expect(posts).toEqual([{ path: '/command', body: { type: 'assign', card_id: card.id, profile: 'coder' } }])
   })
+
+  /** a live router whose command answers are held until released, and whose event stream shows the change only once `applied` */
+  function heldRest(snap: Snapshot, posts: any[], applyTo: (c: any, body: any) => any) {
+    let release!: (r: { ok: boolean; error?: string }) => void
+    const pending = new Promise<{ ok: boolean; error?: string }>((r) => { release = r })
+    let upsert: any = null
+    const rest: Rest = async (path, opts) => {
+      if (opts?.method && opts.method !== 'GET') {
+        posts.push(opts.body)
+        const r = await pending
+        if (r.ok) upsert = applyTo(snap.projects.flatMap((p) => p.cards).find((c) => c.id === (opts.body as any).card_id), opts.body)
+        return r
+      }
+      if (path.startsWith('/snapshot')) return snap
+      if (path.startsWith('/events')) {
+        return { v: 1, epoch: snap.epoch, cursor: snap.cursor, resync: false,
+          events: upsert ? [{ seq: 1_000_000, type: 'card_upsert', payload: { card: upsert } }] : [] }
+      }
+      throw new Error('unexpected ' + path)
+    }
+    return { rest, release: (r: { ok: boolean; error?: string }) => release(r) }
+  }
+  const choiceButtons = () => Array.from(document.querySelectorAll('[aria-label="Set status"] button, [aria-label="Assign profile"] button')) as HTMLButtonElement[]
+
+  it('rapid clicks send one command; choices stay disabled until the board shows the change', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    const posts: any[] = []
+    const held = heldRest(snap, posts, (c, body) => ({ ...c, status_native: body.status_native }))
+    const scene = await mount(held.rest)
+    await waitFor(() => !document.getElementById('foundry-simulated') && !!document.querySelector('canvas'), 'the live pane')
+    await tick(60)
+    const card = await openCard(scene, snap)
+    // three clicks in one task: a double click, then a different status and a profile, before any response
+    await act(async () => {
+      (document.getElementById('foundry-status-blocked') as HTMLButtonElement).click()
+      ;(document.getElementById('foundry-status-blocked') as HTMLButtonElement).click()
+      ;(document.getElementById('foundry-status-review') as HTMLButtonElement).click()
+      const other = profileButtons().find((b) => b.getAttribute('aria-pressed') !== 'true')
+      other?.click()
+    })
+    expect(posts).toEqual([{ type: 'set_status', card_id: card.id, status_native: 'blocked' }])
+    expect(choiceButtons().length).toBeGreaterThan(0)
+    expect(choiceButtons().every((b) => b.disabled)).toBe(true)
+    await act(async () => { held.release({ ok: true }) })
+    await tick(30)
+    // answered, but the card on the board has not changed yet (or had not when the guard was armed): the poll decides
+    await waitFor(() => (document.getElementById('foundry-status-blocked') as HTMLElement).getAttribute('aria-pressed') === 'true', 'the board to show the new status')
+    await waitFor(() => choiceButtons().every((b) => !b.disabled), 'the choices to re-enable')
+    expect(posts.length).toBe(1)
+  })
+
+  it('a failed command re-enables the choices at once, so the user can retry', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    const posts: any[] = []
+    const held = heldRest(snap, posts, (c) => c)
+    const scene = await mount(held.rest)
+    await waitFor(() => !document.getElementById('foundry-simulated') && !!document.querySelector('canvas'), 'the live pane')
+    await tick(60)
+    await openCard(scene, snap)
+    await click('foundry-status-blocked')
+    expect(choiceButtons().every((b) => b.disabled)).toBe(true)
+    await act(async () => { held.release({ ok: false, error: 'nope' }) })
+    await waitFor(() => notice() === 'nope', 'the error notice')
+    expect(choiceButtons().filter((b) => b.getAttribute('aria-pressed') !== 'true').every((b) => !b.disabled)).toBe(true)
+  })
+
+  it('text typed for one card never assigns another: switching cards clears the typed profile', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    snap.projects = snap.projects.map((p) => ({ ...p, cards: p.cards.map((c) => ({ ...c, assignee_profile: null })) }))
+    const posts: { path: string; body: unknown }[] = []
+    const scene = await mount(liveRest(snap, posts))
+    await waitFor(() => !document.getElementById('foundry-simulated') && !!document.querySelector('canvas'), 'the live pane')
+    await tick(60)
+    const [a, b] = snap.projects.flatMap((p) => p.cards).filter((c) => c.claimed_by === null && !['review', 'done', 'blocked'].includes(c.status_native))
+    expect(b).toBeTruthy()
+    await dragOnto(scene, snap.workers[0].id, a.id)
+    await waitFor(() => !!document.getElementById('foundry-profile'), 'card A')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    const input = document.getElementById('foundry-profile') as HTMLInputElement
+    await act(async () => { setter.call(input, 'coder'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+    expect((document.getElementById('foundry-assign') as HTMLButtonElement).disabled).toBe(false)
+    await dragOnto(scene, snap.workers[0].id, b.id)
+    await waitFor(() => document.body.textContent!.includes(b.id), 'card B')
+    expect((document.getElementById('foundry-profile') as HTMLInputElement).value).toBe('')
+    expect((document.getElementById('foundry-assign') as HTMLButtonElement).disabled).toBe(true)
+    await click('foundry-assign')
+    expect(posts).toEqual([])
+  })
+
 })
