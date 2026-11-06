@@ -5,6 +5,8 @@
 #        pass file:///path/to/clone to test a branch)
 # Every check is mandatory: the first one that fails prints "GATE FAIL ..." and the script exits non-zero.
 # "ALL GREEN" is printed only when every check passed. The temp HERMES_HOME and the dashboard are always cleaned up.
+# The gate covers the agent half (router) only. The desktop half is opt-in: its nav item stays hidden until the user
+# enables it under Capabilities > Plugins, so this script does not exercise the pane.
 # HERMES_BIN overrides the hermes executable (tests/test_install_gate.py uses a stub to prove the failure paths).
 set -euo pipefail
 
@@ -45,7 +47,13 @@ export HERMES_HOME="$HH"
 unset OPENAI_API_KEY ANTHROPIC_API_KEY OPENROUTER_API_KEY
 LOG="$HH/dash.log"
 
-PORT="$(free-port 2>/dev/null)" || PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+PORT="$(free-port 2>/dev/null)" || PORT="$(python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+PY
+)"
 [ -n "$PORT" ] || fail "no free port"
 B="http://127.0.0.1:$PORT"
 

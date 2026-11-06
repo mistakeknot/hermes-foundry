@@ -18,6 +18,14 @@ built from `desktop/src/plugin.ts` only:
 `desktop/src/probe.ts` is a development-only integration probe. It is not imported by
 `plugin.ts` and is not in the product bundle.
 
+### Enabling the pane (desktop half is opt-in)
+
+`hermes plugins enable foundry` turns on the agent half (the router). The desktop half is opt-in:
+Hermes marks the copy in `desktop-plugins/foundry` as not enabled by default, so the Foundry nav item stays
+hidden until the user turns it on under Capabilities > Plugins. Nothing in this repo can change that default.
+Hermes copies the whole `desktop/` directory into `desktop-plugins/foundry`; only `plugin.js` is used at runtime.
+`scripts/install_gate.sh` checks the router only and does not exercise the pane.
+
 ## Agent tools
 
 The plugin registers three Hermes agent tools (toolset `foundry`). Each result is JSON `{ok, error?, simulated}`.

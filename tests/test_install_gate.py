@@ -137,3 +137,24 @@ def test_mktemp_failure_is_not_masked(tmp_path):
     env = {**os.environ, "TMPDIR": str(tmp_path / "does-not-exist")}
     r = subprocess.run(["bash", str(GATE), "file:///x"], env=env, capture_output=True, text=True, timeout=60)
     assert r.returncode != 0 and "ALL GREEN" not in r.stdout
+
+
+def test_no_file_trips_the_hermes_install_scanner_socket_oneliner():
+    """`hermes plugins install` refuses a repo with a critical scanner finding and --force does not override.
+    A python one-liner that opens a socket via the interpreter's -c flag (scanner rule python_socket_oneliner)
+    once made the repo uninstallable, so keep it out of every tracked file, this one included."""
+    import re
+
+    root = GATE.parent.parent
+    files = subprocess.run(["git", "-C", str(root), "ls-files"], capture_output=True, text=True, check=True).stdout.split()
+    rule = re.compile(r"""python[23]?\s+-c\s+["']import\s+socket""")
+    hits = []
+    for rel in files:
+        p = root / rel
+        try:
+            text = p.read_text(errors="strict")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if rule.search(text):
+            hits.append(rel)
+    assert hits == [], f"scanner-critical socket one-liner in: {hits}"
