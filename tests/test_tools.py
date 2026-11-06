@@ -303,3 +303,70 @@ def test_module_reset_clears_the_default_tools(monkeypatch):
     first._failure, first._failed_at = "cached", 1e12
     mod.reset()
     assert first._failure is None and first._source is None
+
+
+# -- the label belongs to the source that answered, not to whatever is configured afterwards ------------------------
+
+def test_a_reset_and_config_flip_during_the_command_does_not_relabel_a_fixture_answer(monkeypatch):
+    monkeypatch.setenv("FOUNDRY_MODE", "fixture")
+    box = {}
+
+    class Racing(_Mode):
+        def command(self, body):
+            box["tools"].reset()                      # a concurrent reset ...
+            monkeypatch.setenv("FOUNDRY_MODE", "live")  # ... after the configuration switched to live
+            box["next"] = True
+            return {"ok": True}
+
+    t = box["tools"] = FoundryTools(make=lambda: _Mode("live") if box.get("next") else Racing("fixture"))
+    assert _out(t.stand({"on": True})) == {"ok": True, "simulated": True}
+
+
+def test_a_reset_during_a_raising_command_does_not_relabel_the_error(monkeypatch):
+    monkeypatch.setenv("FOUNDRY_MODE", "fixture")
+    box = {}
+
+    class Racing(_Mode):
+        def command(self, body):
+            box["tools"].reset()
+            monkeypatch.setenv("FOUNDRY_MODE", "live")
+            raise ValueError("kaboom")
+
+    t = box["tools"] = FoundryTools(make=lambda: Racing("fixture"))
+    out = _out(t.stand({"on": True}))
+    assert out["ok"] is False and "kaboom" in out["error"] and out["simulated"] is True
+
+
+def test_a_live_answer_stays_live_when_reset_flips_the_next_source_to_fixture(monkeypatch):
+    box = {}
+
+    class Racing(_Mode):
+        def command(self, body):
+            box["tools"].reset()
+            box["next"] = True
+            return {"ok": True}
+
+    t = box["tools"] = FoundryTools(make=lambda: _Mode("fixture") if box.get("next") else Racing("live"))
+    assert _out(t.assign({"card_id": "a:1", "profile": "coder"})) == {"ok": True, "simulated": False}
+
+
+def test_a_real_concurrent_reset_never_mislabels_a_fixture_answer(monkeypatch):
+    import threading
+    monkeypatch.setenv("FOUNDRY_MODE", "live")  # configuration says live, the source is the fixture
+    t = FoundryTools(make=lambda: FixtureSource(epoch_prefix="fxc"))
+    stop, bad = threading.Event(), []
+
+    def resetter():
+        while not stop.is_set():
+            t.reset()
+    th = threading.Thread(target=resetter)
+    th.start()
+    try:
+        for i in range(300):
+            out = _out(t.stand({"on": bool(i % 2)}))
+            if out["simulated"] is not True:
+                bad.append(out)
+    finally:
+        stop.set()
+        th.join()
+    assert bad == []

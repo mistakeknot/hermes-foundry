@@ -113,11 +113,15 @@ class FoundryTools:
             self._failure = None
             return self._source
 
+    @staticmethod
+    def _label(source: Any) -> bool:
+        return getattr(source, "mode", "") != "live"
+
     def _simulated(self) -> bool:
-        """True unless the answering source is the live board. Same value on every path: the built source's mode,
-        or, if it cannot be built, the configured mode."""
+        """True unless the answering source is the live board: the built source's mode, or, if it cannot be built,
+        the configured mode. Call with the lock held, and use the value in the same critical section."""
         try:
-            return getattr(self._get_source(), "mode", "") != "live"
+            return self._label(self._get_source())
         except Exception:  # health: allow BLE001 -- a failed source falls back to the configured mode
             return _configured_simulated()
 
@@ -131,17 +135,26 @@ class FoundryTools:
         return True
 
     def call(self, body: dict[str, Any]) -> str:
-        """Run one command; return the JSON text {ok, error?, simulated}."""
-        try:
-            with self._lock:
+        """Run one command; return the JSON text {ok, error?, simulated}.
+
+        The label comes from the very source object that ran the command and is computed in the same critical
+        section, so a concurrent reset() or configuration change cannot relabel the answer.
+        """
+        with self._lock:
+            source = None
+            try:
                 source = self._get_source()
+                simulated = self._label(source)
                 result = dict(run_command(source, body))
-        except Exception as exc:  # health: allow BLE001 -- a tool reports, it never raises into the agent loop
-            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-        return self._out(result)
+            except Exception as exc:  # health: allow BLE001 -- a tool reports, it never raises into the agent loop
+                result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                simulated = self._label(source) if source is not None else _configured_simulated()
+            return json.dumps({**result, "simulated": simulated}, sort_keys=True)
 
     def _out(self, result: dict[str, Any]) -> str:
-        return json.dumps({**result, "simulated": self._simulated()}, sort_keys=True)
+        """A result that never reached a command (bad arguments): labelled from the source, under the lock."""
+        with self._lock:
+            return json.dumps({**result, "simulated": self._simulated()}, sort_keys=True)
 
     # -- handlers (Hermes calls handler(args)) --------------------------------
     def assign(self, args: Any, **_: Any) -> str:
