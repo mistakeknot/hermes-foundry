@@ -206,16 +206,94 @@ def test_read_in_an_empty_home_creates_nothing(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []  # no kanban.db, no init lock, nothing
 
 
-def test_read_leaves_an_existing_database_untouched(kb, tmp_path):
+def _set_journal(tmp_path, board, mode):
+    """Put a board's database in a journal mode (Hermes picks DELETE itself on an SQLite with the WAL-reset bug)."""
+    import sqlite3
+    path = next(tmp_path.rglob(f"{board}/kanban.db"))
+    c = sqlite3.connect(path)
+    try:
+        assert c.execute(f"PRAGMA journal_mode={mode}").fetchone()[0].lower() == mode
+    finally:
+        c.close()
+
+
+@pytest.mark.parametrize("mode", ["delete", "wal"])
+def test_read_leaves_an_existing_database_untouched(kb, tmp_path, mode):
     from foundry_core.live import LiveSource
     _mk(kb, "atlas", "x")
-    before = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    _set_journal(tmp_path, "atlas", mode)
+    before = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*")}
     LiveSource(min_interval=0).snapshot()
-    after = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
-    new = [p.name for p in after if p not in before]
-    assert all(n.endswith(("-shm", "-wal")) for n in new), new  # at most SQLite's own WAL sidecars; no lock, no new DB
+    after = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*")}
     db = next(p for p in before if p.name == "kanban.db" and p.parent.name == "atlas")
+    new = sorted(p for p in after if p not in before)
+    # The claim is exact: a read creates no database, lock file, directory or schema. In WAL mode SQLite itself may add
+    # the -wal/-shm sidecars of the existing database (documented in live.py), and nothing else; in DELETE mode, nothing.
+    allowed = {db.name + "-wal", db.name + "-shm"} if mode == "wal" else set()
+    assert all(p.parent == db.parent and p.name in allowed and p.is_file() for p in new), new
     assert before[db] == after[db]  # the main database file is not written
+    assert not (set(before) - set(after))  # nothing removed either
+
+
+@pytest.mark.parametrize("mode", ["delete", "wal"])
+def test_a_comment_inserted_mid_poll_is_not_lost(kb, tmp_path, mode):
+    """A writer lands a task and a comment between the task query and the comment query of a poll. The poll must never
+    advance past a comment whose card it did not emit: the card and its comment arrive, card first."""
+    import threading
+    from foundry_core.live import LiveSource
+    mod, connect = kb
+    _mk(kb, "atlas", "seed")
+    _set_journal(tmp_path, "atlas", mode)
+    s = LiveSource(min_interval=0)
+    base = s.snapshot()
+    real = mod.list_tasks
+    landed = threading.Event()
+    box: dict = {}
+
+    def writer():
+        w = connect(board="atlas")
+        try:
+            tid = mod.create_task(w, title="raced")
+            mod.add_comment(w, tid, "someone", "raced comment")
+            box["tid"] = tid
+        finally:
+            w.close()
+            landed.set()
+
+    def racing(conn, **kw):
+        out = real(conn, **kw)
+        if "t" not in box:
+            box["t"] = threading.Thread(target=writer)
+            box["t"].start()
+            # Without a read transaction the write lands right here, between the two queries. With one, the writer waits
+            # for the read to end (DELETE) or commits unseen (WAL); either way the poll's view stays consistent.
+            landed.wait(0.7)
+        return out
+
+    mod.list_tasks = racing
+    try:
+        first = s.events(base["cursor"])
+    finally:
+        mod.list_tasks = real
+    box["t"].join(10)
+    assert landed.is_set() and "tid" in box
+    seen = list(first["events"]) + list(s.events(first["cursor"])["events"])
+    cid = f"atlas:{box['tid']}"
+    kinds = [(e["type"], (e["payload"].get("card") or {}).get("id") or e["payload"].get("card_id")) for e in seen]
+    assert ("card_upsert", cid) in kinds and ("comment_added", cid) in kinds, kinds
+    assert kinds.index(("card_upsert", cid)) < kinds.index(("comment_added", cid))
+
+
+def test_each_board_is_read_in_one_transaction(kb):
+    """_open_ro hands back a connection already inside its read transaction; closing it ends it."""
+    from foundry_core.live import LiveSource
+    _mk(kb, "atlas", "x")
+    conn = LiveSource(min_interval=0)._open_ro("atlas")
+    try:
+        assert conn.in_transaction is True
+        assert conn.isolation_level is None  # explicit BEGIN only; Python never commits for us
+    finally:
+        conn.close()
 
 
 def test_board_with_metadata_but_no_database_is_absent_and_not_created(kb, tmp_path):

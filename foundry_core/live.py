@@ -15,7 +15,12 @@ The kanban stays the source of truth. Nothing is stored here except a diff basel
     cannot express (a board appears or disappears or is renamed) bumps ``seq`` and raises the resync floor.
 
 Reads open each board's existing database read-only (sqlite ``mode=ro``, bounded busy wait): they never initialise,
-migrate, repair or create anything, and a board without a database is simply absent. Board names (from
+migrate, repair or create a database, a lock file or a schema, and a board without a database is simply absent. Each
+board is read inside ONE read transaction, so its tasks, events and comments are a single consistent snapshot (a
+comment is never seen without its card). One thing SQLite itself does and a reader cannot avoid: opening an existing
+WAL-mode database may create its ``-wal`` and ``-shm`` sidecar files next to it (not when the directory is read-only,
+where the open fails and the poll raises instead). Those are the only files a read can create; the database file is
+never written. ``immutable=1`` would avoid them but is unsafe on a database that changes, so it is not used. Board names (from
 ``FOUNDRY_BOARDS`` or a card id) must be canonical lowercase slugs that Hermes lists, before any path is formed.
 Commands write through Hermes's own functions, and only to a listed board that already has a database.
 
@@ -256,18 +261,21 @@ class LiveSource:
         return [s for s in found if s in self._only]  # a filtered name that is not (or no longer) a board is absent
 
     def _open_ro(self, slug: str) -> sqlite3.Connection | None:
-        """Open an existing board DB read-only: no schema init, migration, repair or lock file, bounded wait.
-        None when the board has no database yet (or no kanban schema), so a read never creates anything."""
+        """Open an existing board DB read-only, inside an open read transaction (the caller closes the connection,
+        which ends it): no schema init, migration, repair or lock file, bounded wait. None when the board has no database yet (or no kanban schema), so a read never creates anything."""
         path = self._kb.kanban_db_path(board=slug)
         if not path.is_file():
             return None
-        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=READ_BUSY_MS / 1000.0)
+        # isolation_level=None: no implicit transactions; we BEGIN explicitly and hold one snapshot for the whole board.
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=READ_BUSY_MS / 1000.0,
+                               isolation_level=None)
         try:
+            conn.execute(f"PRAGMA busy_timeout={READ_BUSY_MS}")
+            conn.execute("BEGIN")  # deferred: the first SELECT below fixes the snapshot; every later read sees it
             conn.row_factory = sqlite3.Row
             lossy = getattr(self._kb, "_lossy_text", None)
             if lossy is not None:
                 conn.text_factory = lossy
-            conn.execute(f"PRAGMA busy_timeout={READ_BUSY_MS}")
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone() is None:
                 conn.close()
                 return None
