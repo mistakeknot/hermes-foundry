@@ -799,12 +799,30 @@ export class FoundryScene {
     if (!s) return
     this.pendingSize = null
     this.renderer.setSize(s.w, s.h, false)
+    const prevAspect = this.camera.aspect
     this.camera.aspect = s.w / s.h
     this.camera.updateProjectionMatrix()
     this.viewW = s.w
     this.viewH = s.h
     if (!this.userMoved) this.frameValley(true)
     else if (this.focusedId) this.refocus() // a pane that changed size must not leave the approached creature cropped
+    else this.keepWidth(prevAspect)
+  }
+
+  /**
+   * The user owns the view, so a resize must not reframe it, but a pane that gets narrower would cut off both sides of
+   * what they were looking at (the vertical field of view is fixed, so only the width shrinks). Back the camera off along
+   * its line of sight by the same ratio, which keeps the horizontal span they had; a pane that gets wider is left alone.
+   */
+  private keepWidth(prevAspect: number) {
+    const k = prevAspect / this.camera.aspect
+    if (!(k > 1) || !Number.isFinite(k)) return
+    const dir = this.camera.position.clone().sub(this.controls.target)
+    const d = dir.length() * k
+    if (!(d > 0)) return
+    this.allowReach(d)
+    this.camera.position.copy(this.controls.target).addScaledVector(dir.normalize(), d)
+    this.controls.update()
   }
 
   private refocus() {

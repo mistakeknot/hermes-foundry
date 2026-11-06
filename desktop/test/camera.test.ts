@@ -85,6 +85,21 @@ describe('default camera frames every creature', () => {
     expect(a.camera.position.distanceTo(b.camera.position)).toBeLessThan(1e-6)
   })
 
+  it('a narrower pane backs a user-held camera off so the sides are not cut; a wider one leaves it', () => {
+    const scene = mk(); scene.update(snapshotWith(3)); scene.resize(1280, 633)
+    scene.controls.dispatchEvent({ type: 'start' }) // the user has taken the view (a click on a card does this)
+    const wide = extents(scene)
+    const dWide = scene.camera.position.distanceTo(scene.controls.target)
+    scene.resize(540, 476)
+    const dNarrow = scene.camera.position.distanceTo(scene.controls.target)
+    expect(dNarrow).toBeGreaterThan(dWide * 1.5) // backed off along the line of sight
+    const narrow = extents(scene)
+    expect(narrow.maxX).toBeLessThanOrEqual(wide.maxX + 0.05) // what was inside the sides stays inside them
+    expect(narrow.minX).toBeGreaterThanOrEqual(wide.minX - 0.05)
+    scene.resize(1280, 633)
+    expect(scene.camera.position.distanceTo(scene.controls.target)).toBeCloseTo(dNarrow, 5) // widening changes nothing
+  })
+
   it('a resize reframes until the user moves the camera, then leaves the view alone', () => {
     const scene = mk(); scene.update(snapshotWith(3)); scene.resize(1280, 633)
     const first = scene.camera.position.clone()
