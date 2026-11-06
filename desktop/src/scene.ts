@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildCreature, frameAt, layoutCreatures, type CreatureSpec, type LimbSpec, type Material, type V3 } from './creature'
 import { hashString, rng } from './rng'
+import { creaturePoints, fitCamera, placeLabels, type Box, type LabelIn } from './framing'
 import { claimedWithoutClimber } from './reducer'
 import { dropOutcome, isDrag, type AssignRequest } from './drag'
 import { slipPose } from './slip'
@@ -138,6 +139,7 @@ export class FoundryScene {
     this.controls.minDistance = 4
     this.controls.maxDistance = 70
     this.controls.maxPolarAngle = Math.PI * 0.47
+    this.controls.addEventListener('start', () => { this.userMoved = true }) // from here the user owns the view
     this.controls.target.set(0, 3, 0)
     this.loop()
   }
@@ -211,22 +213,36 @@ export class FoundryScene {
     this.frameValley(false)
   }
 
-  /** Move the camera target so all creatures are in view (only on first data, or when asked). */
+  /**
+   * Frame the whole valley: every creature's footprint and crown inside the pane (clear of the header and the edges),
+   * at the closest distance where that holds so the creatures fill the view. Runs on first data and on every resize
+   * until the user moves the camera, so a different pane size never leaves creatures cropped.
+   */
   private framed = false
+  private userMoved = false
+  private viewW = 0
+  private viewH = 0
+  private frameDist = 50
   frameValley(force: boolean) {
     if (this.framed && !force) return
-    if (this.creatures.size === 0) return
+    if (this.creatures.size === 0 || this.viewW < 2) return
     this.framed = true
-    let maxR = 0
-    for (const v of this.creatures.values()) maxR = Math.max(maxR, v.center.length() + v.spec.radius)
-    this.controls.target.set(0, 3, 0)
-    const d = Math.min(Math.max(maxR * 1.25 + 6, 14), 50)
-    this.camera.position.set(d * 0.45, d * 0.5, d * 0.85)
+    const pts: THREE.Vector3[] = []
+    for (const v of this.creatures.values()) pts.push(...creaturePoints(v.center, v.spec))
+    const box = new THREE.Box3().setFromPoints(pts)
+    const mid = box.getCenter(new THREE.Vector3())
+    this.controls.target.set(mid.x, 0, mid.z)
+    this.frameDist = fitCamera(this.camera, this.controls.target, pts, this.viewW, this.viewH)
+    this.controls.maxDistance = Math.max(70, this.frameDist * 1.3)
+    // keep the fog's grip on the creatures constant when a large or tall valley pushes the camera back
+    if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = Math.min(0.015, 0.55 / this.frameDist)
+    this.controls.update()
   }
 
   focusCreature(projectId: string) {
     const v = this.creatures.get(projectId)
     if (!v) return
+    this.userMoved = true
     const to = v.center.clone().add(new THREE.Vector3(0, v.spec.height * 0.4, 0))
     this.focus = { from: this.controls.target.clone(), to, t: 0 }
     const dir = this.camera.position.clone().sub(this.controls.target).normalize()
@@ -647,11 +663,20 @@ export class FoundryScene {
         return
       }
       this.canvas.style.cursor = hit ? 'pointer' : 'grab'
+      this.hoverProject = this.projectOfPick(hit?.pick ?? null)
       this.cb.onHover(hit?.label ?? null, this.lastPointer.x, this.lastPointer.y)
     })
   }
+  private projectOfPick(p: Pick | null): string | null {
+    if (!p) return null
+    if (p.kind === 'project') return p.id
+    const cardId = p.kind === 'card' ? p.id : p.kind === 'doc' ? p.cardId : null
+    if (cardId) for (const v of this.creatures.values()) if (v.cardPos.has(cardId)) return v.spec.projectId
+    return null
+  }
   // leaving the canvas mid-drag cancels it: no drop, no change
   private onLeave = (e: PointerEvent) => {
+    this.hoverProject = null
     this.cb.onHover(null, 0, 0)
     if (this.drag && e.pointerId === this.drag.id) { this.down = null; this.endDrag() }
   }
@@ -662,6 +687,9 @@ export class FoundryScene {
     this.renderer.setSize(w, h, false)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
+    this.viewW = w
+    this.viewH = h
+    if (!this.userMoved) this.frameValley(true)
   }
 
   private tmp = new THREE.Vector3()
@@ -694,20 +722,51 @@ export class FoundryScene {
     this.frameCount++
   }
 
+  /** Project each limb label, then drop the ones that would collide (see placeLabels); the rest fade with distance. */
   private positionLabels() {
-    const w = this.canvas.clientWidth, h = this.canvas.clientHeight
+    const w = this.canvas.clientWidth || this.viewW, h = this.canvas.clientHeight || this.viewH
+    const all: { l: CreatureView['labels'][number]; at: { x: number; y: number } }[] = []
+    const ins: LabelIn[] = []
+    const pinned = this.pinnedProject()
     for (const v of this.creatures.values()) {
-      const near = this.camera.position.distanceTo(v.center) < 60
       for (const l of v.labels) {
-        this.tmp.copy(l.world).project(this.camera)
-        const vis = near && this.tmp.z < 1 && Math.abs(this.tmp.x) < 1.1 && Math.abs(this.tmp.y) < 1.1
-        l.el.style.display = vis ? 'block' : 'none'
-        if (vis) { l.el.style.left = `${(this.tmp.x * 0.5 + 0.5) * w}px`; l.el.style.top = `${(-this.tmp.y * 0.5 + 0.5) * h}px` }
         const n = l.limb.scales.length
         const text = this.totalCards > CROWDED && n > 0 ? `${l.limb.title} · ${n}` : l.limb.title
         if (l.el.textContent !== text) l.el.textContent = text
+        this.tmp.copy(l.world).project(this.camera)
+        const inView = this.tmp.z < 1 && Math.abs(this.tmp.x) < 1.1 && Math.abs(this.tmp.y) < 1.1
+        const at = { x: (this.tmp.x * 0.5 + 0.5) * w, y: (-this.tmp.y * 0.5 + 0.5) * h }
+        all.push({ l, at })
+        ins.push({ x: at.x, y: at.y, width: text.length * 6.4 + 8, dist: inView ? this.camera.position.distanceTo(l.world) : Infinity, pinned: inView && v.spec.projectId === pinned })
       }
     }
+    // climber rings: keep labels off them
+    const avoid: Box[] = []
+    for (const c of this.climbers.values()) {
+      this.tmp.copy(c.mesh.position).project(this.camera)
+      if (this.tmp.z >= 1) continue
+      const x = (this.tmp.x * 0.5 + 0.5) * w, y = (-this.tmp.y * 0.5 + 0.5) * h
+      avoid.push({ l: x - 16, r: x + 16, t: y - 16, b: y + 16 })
+    }
+    const fadeFrom = Math.max(45, this.frameDist * 1.2)
+    const out = placeLabels(ins, avoid, w, h, fadeFrom, fadeFrom + 35)
+    all.forEach(({ l }, i) => {
+      const o = out[i]
+      l.el.style.display = o.show ? 'block' : 'none'
+      if (!o.show) return
+      l.el.style.left = `${o.x}px`
+      l.el.style.top = `${o.y}px`
+      l.el.style.opacity = String(o.opacity)
+    })
+  }
+
+  /** The project whose labels are always shown: the one under the pointer, else the one holding the selected card. */
+  private hoverProject: string | null = null
+  private pinnedProject(): string | null {
+    if (this.hoverProject) return this.hoverProject
+    if (!this.selectedCard) return null
+    for (const v of this.creatures.values()) if (v.cardPos.has(this.selectedCard)) return v.spec.projectId
+    return null
   }
 
   dispose() {
