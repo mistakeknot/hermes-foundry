@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildCreature, frameAt, layoutCreatures, type CreatureSpec, type LimbSpec, type Material, type V3 } from './creature'
 import { hashString, rng } from './rng'
 import { claimedWithoutClimber } from './reducer'
+import { dropOutcome, isDrag, type AssignRequest } from './drag'
 import type { Card, Project, Snapshot, Worker } from './types'
 
 export const STATUS_COLOR: Record<Card['status'], number> = {
@@ -28,6 +29,8 @@ export type Pick =
 export interface SceneCallbacks {
   onPick(p: Pick | null): void
   onHover(label: string | null, x: number, y: number): void
+  /** A climber was dropped on a scale. The pane opens the card's profile selector; nothing is claimed or assigned. */
+  onDrop?(req: AssignRequest): void
 }
 
 /** Scales are drawn only when a creature is close enough, once the valley is crowded (legibility past ~100 cards). */
@@ -85,6 +88,9 @@ export class FoundryScene {
   private selectedCard: string | null = null
   private focus: { from: THREE.Vector3; to: THREE.Vector3; t: number } | null = null
   private down: { x: number; y: number } | null = null
+  /** The climber being dragged, if the press started on one. Orbit is suspended while it is set. */
+  private drag: { workerId: string } | null = null
+  private dropSeq = 0
   private labelHost: HTMLElement
   private disposed = false
   private hoverQueued = false
@@ -122,6 +128,7 @@ export class FoundryScene {
     canvas.addEventListener('pointerup', this.onUp)
     canvas.addEventListener('pointermove', this.onMove)
     canvas.addEventListener('pointerleave', this.onLeave)
+    canvas.addEventListener('pointercancel', this.onCancel)
     canvas.addEventListener('dblclick', this.onDbl)
     this.loop()
   }
@@ -479,30 +486,59 @@ export class FoundryScene {
     }
     return null
   }
-  private onDown = (e: PointerEvent) => { this.down = { x: e.clientX, y: e.clientY } }
+  private onDown = (e: PointerEvent) => {
+    this.down = { x: e.clientX, y: e.clientY }
+    // a press on a climber is a possible drag; on anything else it stays an orbit
+    const hit = e.button === 0 ? this.pickAt(this.ndc(e)) : null
+    if (hit?.pick.kind === 'worker') { this.drag = { workerId: hit.pick.id }; this.controls.enabled = false }
+  }
+  /** Drop the gesture and give the camera back. Used by pointer-up, cancel, leave and dispose. */
+  private endDrag() {
+    this.drag = null
+    this.controls.enabled = true
+    this.canvas.style.cursor = 'grab'
+  }
   private onUp = (e: PointerEvent) => {
     const d = this.down; this.down = null
-    if (!d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return // a drag is an orbit, not a click
+    const drag = this.drag
+    if (drag) this.endDrag()
+    if (!d) return
+    if (isDrag(d, { x: e.clientX, y: e.clientY })) {
+      // a drag that began on a climber is a drop; any other drag was an orbit. Either way it is not a click.
+      if (!drag) return
+      const out = dropOutcome(drag.workerId, this.pickAt(this.ndc(e))?.pick ?? null, ++this.dropSeq)
+      if (out) this.cb.onDrop?.(out.open)
+      return
+    }
     const hit = this.pickAt(this.ndc(e))
     this.cb.onPick(hit?.pick ?? null)
   }
+  private onCancel = () => { this.down = null; if (this.drag) this.endDrag() }
   private onDbl = (e: MouseEvent) => {
     const hit = this.pickAt(this.ndc(e))
     if (hit?.pick.kind === 'project') this.focusCreature(hit.pick.id)
   }
   private onMove = (e: PointerEvent) => {
     this.lastPointer = { x: e.clientX, y: e.clientY }
-    if (this.hoverQueued || e.buttons) return
+    if (this.hoverQueued || (e.buttons && !this.drag)) return
     this.hoverQueued = true
     requestAnimationFrame(() => {
       this.hoverQueued = false
       if (this.disposed) return
       const hit = this.pickAt(this.ndc({ clientX: this.lastPointer.x, clientY: this.lastPointer.y } as MouseEvent))
+      if (this.drag) {
+        // while dragging a climber, only a scale is a valid drop; show that and nothing else
+        const ok = hit?.pick.kind === 'card'
+        this.canvas.style.cursor = ok ? 'copy' : 'no-drop'
+        this.cb.onHover(ok ? 'Drop to choose a profile (does not claim)' : null, this.lastPointer.x, this.lastPointer.y)
+        return
+      }
       this.canvas.style.cursor = hit ? 'pointer' : 'grab'
       this.cb.onHover(hit?.label ?? null, this.lastPointer.x, this.lastPointer.y)
     })
   }
-  private onLeave = () => this.cb.onHover(null, 0, 0)
+  // leaving the canvas mid-drag cancels it: no drop, no change
+  private onLeave = () => { this.cb.onHover(null, 0, 0); if (this.drag) { this.down = null; this.endDrag() } }
 
   // ---------------- loop ----------------
   resize(w: number, h: number) {
@@ -561,6 +597,7 @@ export class FoundryScene {
     this.canvas.removeEventListener('pointerup', this.onUp)
     this.canvas.removeEventListener('pointermove', this.onMove)
     this.canvas.removeEventListener('pointerleave', this.onLeave)
+    this.canvas.removeEventListener('pointercancel', this.onCancel)
     this.canvas.removeEventListener('dblclick', this.onDbl)
     this.controls.dispose()
     for (const v of this.creatures.values()) this.disposeCreature(v)
