@@ -10,7 +10,8 @@ Rules (docs/contract.md, draft 3, "Events"):
   * seq need not be contiguous: there is no gap detection (completeness is the server's job, via resync);
   * events carry whole objects (card_upsert, worker_upsert), so applying one is a replace;
   * ``claimed_by`` on a card is the single source of ownership; after every event each worker's
-    ``card_id`` is recomputed from the cards, so the two cannot disagree;
+    ``card_id`` is recomputed from the cards (latest ``updated_at`` wins, ties the greatest card id), so the
+    two cannot disagree; ``worker_removed`` clears ``claimed_by`` on every card naming that worker;
   * an event naming a card the snapshot lacks, or a board/epic it cannot place a card under, sets ``resync``
     and stops applying: the caller must refetch the snapshot;
   * unknown event types advance the watermark and leave state unchanged (forward compatible);
@@ -98,13 +99,18 @@ def _locate(snap: dict[str, Any], card_id: Any) -> tuple[dict[str, Any], int] | 
 
 
 def _derive_worker_cards(snap: dict[str, Any]) -> None:
-    held: dict[str, str] = {}
+    """A worker holds at most one card: the one with the latest ``updated_at`` (ties: greatest card id).
+    Other cards naming it keep ``claimed_by``. A claim naming a worker not in ``workers`` holds nothing."""
+    best: dict[str, tuple[str, str]] = {}
     for p in snap["projects"]:
         for c in p["cards"]:
-            if c.get("claimed_by") and c["claimed_by"] not in held:
-                held[c["claimed_by"]] = c["id"]
+            wid = c.get("claimed_by")
+            if wid:
+                key = (c.get("updated_at") or "", c["id"])
+                if wid not in best or key > best[wid]:
+                    best[wid] = key
     for w in snap["workers"]:
-        w["card_id"] = held.get(w["id"])
+        w["card_id"] = best[w["id"]][1] if w["id"] in best else None
 
 
 def _apply(snap: dict[str, Any], ev: dict[str, Any]) -> bool:
@@ -146,7 +152,12 @@ def _apply(snap: dict[str, Any], ev: dict[str, Any]) -> bool:
             snap["workers"].append(copy.deepcopy(w))
         return True
     if t == "worker_removed":
-        snap["workers"] = [w for w in snap["workers"] if w["id"] != p.get("worker_id")]
+        wid = p.get("worker_id")
+        snap["workers"] = [w for w in snap["workers"] if w["id"] != wid]
+        for proj in snap["projects"]:  # draft 4: removing a worker releases every card that names it
+            for c in proj["cards"]:
+                if c.get("claimed_by") == wid:
+                    c["claimed_by"] = None
         return True
     if t == "paused":
         snap["paused"] = bool(p.get("paused"))

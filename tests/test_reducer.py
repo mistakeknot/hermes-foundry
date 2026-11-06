@@ -194,3 +194,28 @@ def test_there_is_no_reset_event():
     st = base()
     r = apply_event(st, ev(1, "reset"))
     assert r["snapshot"] == st["snapshot"]
+
+
+def test_two_cards_for_one_worker_latest_updated_at_wins_tie_greatest_id():
+    st = base()
+    st = apply_event(st, upsert(1, st, "atlas:t04", claimed_by="fx:4", updated_at="2026-11-06T01:00:00Z"))
+    st = apply_event(st, upsert(2, st, "atlas:t07", claimed_by="fx:4", updated_at="2026-11-06T02:00:00Z"))
+    assert worker(st, "fx:4")["card_id"] == "atlas:t07"
+    assert card(st, "atlas:t04")["claimed_by"] == "fx:4"  # keeps its claim
+    st = apply_event(st, upsert(3, st, "atlas:t04", claimed_by="fx:4", updated_at="2026-11-06T02:00:00Z"))
+    assert worker(st, "fx:4")["card_id"] == "atlas:t07"  # tie: greatest card id
+
+
+def test_claim_naming_missing_worker_holds_nothing_and_is_kept():
+    st = base()
+    st = apply_event(st, upsert(1, st, T04, claimed_by="ghost:9"))
+    assert card(st, T04)["claimed_by"] == "ghost:9"
+    assert all(w["card_id"] != T04 for w in st["snapshot"]["workers"])
+
+
+def test_worker_removed_clears_claimed_by_on_its_cards():
+    st = base()
+    assert card(st, T03)["claimed_by"] == "fx:1"
+    st = apply_event(st, ev(1, "worker_removed", worker_id="fx:1"))
+    assert card(st, T03)["claimed_by"] is None
+    assert all(w["id"] != "fx:1" for w in st["snapshot"]["workers"])
