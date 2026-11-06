@@ -2,7 +2,7 @@
 
 Each command has a scripted response. A command edits working copies of the cards and workers it touches
 (a ``_Plan``); on success the plan emits one full-object ``card_upsert`` / ``worker_upsert`` per object that
-actually changed (contract draft 3), and the shared reducer applies them. A failed command emits nothing and
+actually changed (contract draft 4), and the shared reducer applies them. A failed command emits nothing and
 changes nothing. ``claimed_by`` on the card is the only ownership fact; a worker's ``card_id`` is derived from it.
 ``reset`` starts a new epoch. Everything here is simulated: the pane labels fixture mode "simulated".
 """

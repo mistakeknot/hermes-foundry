@@ -1,4 +1,4 @@
-// Pure reducer: applySnapshot / applyEvent (contract draft 3). No I/O, no clock, no mutation of inputs.
+// Pure reducer: applySnapshot / applyEvent (contract draft 4). No I/O, no clock, no mutation of inputs.
 import type { Card, EventsReply, FoundryEvent, PaneState, Snapshot, Worker } from './types'
 
 /** `prev` carries comments across a refresh within the same epoch (a snapshot does not hold comments). */
