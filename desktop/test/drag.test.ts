@@ -188,6 +188,22 @@ describe('leaving the canvas cancels the drag for good', () => {
     expect(t.drops).toEqual([])
     expect(t.scene.controls.enabled).toBe(true)
   })
+  it('captured leave-and-return with a release inside click slop: no selection and no drop', () => {
+    const t = harness()
+    t.over(climber); t.down(5, 1, 100) // press near the left edge
+    t.move(-40, 100) // captured move outside the canvas
+    t.move(7, 100) // back within click slop of the press
+    t.over(card('main:t3')) // a scale now sits under the release point
+    t.up(7)
+    expect(t.drops).toEqual([])
+    expect(t.picks).toEqual([])
+    expect(t.scene.controls.enabled).toBe(true)
+  })
+  it('control: the same press with no excursion and a release inside slop is a click', () => {
+    const t = harness()
+    t.over(climber); t.down(5, 1, 100); t.move(7, 100); t.over(card('main:t3')); t.up(7)
+    expect(t.picks).toEqual([card('main:t3')])
+  })
   it('a release in bounds without ever leaving still drops (control)', () => {
     const t = harness()
     t.over(climber); t.down(); t.move(400); t.over(card('main:t3')); t.up(400)

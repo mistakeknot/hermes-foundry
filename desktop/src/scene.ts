@@ -528,9 +528,11 @@ export class FoundryScene {
     this.down = null
     const drag = this.drag
     if (drag) this.endDrag()
+    // a cancelled gesture, or a release outside the canvas, produces neither a drop nor a pick (even within click slop)
+    if (drag?.cancelled || !this.inside(e)) return
     if (isDrag(d, { x: e.clientX, y: e.clientY })) {
       // a drag that began on a climber is a drop; any other drag was an orbit. Either way it is not a click.
-      if (!drag || drag.cancelled || !this.inside(e)) return
+      if (!drag) return
       const out = dropOutcome(drag.workerId, this.pickAt(this.ndc(e))?.pick ?? null, ++this.dropSeq)
       if (out) this.cb.onDrop?.(out.open)
       return
