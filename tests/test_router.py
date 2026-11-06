@@ -102,3 +102,51 @@ def test_garbage_cursor_over_http_is_resync(client):
     for since in ("e.²", "x." + "9" * 5000):
         r = client.get("/api/plugins/foundry/events", params={"since": since})
         assert r.status_code == 200 and r.json()["resync"] is True
+
+
+def test_replay_over_http(monkeypatch):
+    monkeypatch.setenv("FOUNDRY_REPLAY", "1")
+    monkeypatch.setenv("FOUNDRY_REPLAY_STEP_SECONDS", "1")
+    spec = importlib.util.spec_from_file_location("hermes_dashboard_plugin_foundry_replay", API)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    app = FastAPI()
+    app.include_router(mod.router, prefix="/api/plugins/foundry")
+    c = TestClient(app)
+    c.get("/api/plugins/foundry/snapshot")  # the source starts on first use
+    src = mod._source
+    src._clock = lambda: src._t0 + 3600.0  # an injected clock: an hour has passed, so every step is due
+    snap = c.get("/api/plugins/foundry/snapshot").json()
+    assert snap["mode"] == "fixture" and snap["last_seq"] > 0  # the recording has been played to the end
+    assert c.post("/api/plugins/foundry/command", json={"type": "stand", "on": True}).json()["ok"] is False
+    assert c.post("/api/plugins/foundry/command", json={"type": "reset"}).json() == {"ok": True}
+    assert c.get("/api/plugins/foundry/events", params={"since": snap["cursor"], "epoch": snap["epoch"]}).json()["resync"] is True
+    assert c.get("/api/plugins/foundry/transcript", params={"worker_id": "fx:3"}).status_code == 200
+
+
+@pytest.mark.parametrize("step", ["nan", "inf", "0", "-1"])
+def test_replay_bad_step_is_a_503_not_a_broken_feed(monkeypatch, step):
+    monkeypatch.setenv("FOUNDRY_REPLAY", "1")
+    monkeypatch.setenv("FOUNDRY_REPLAY_STEP_SECONDS", step)
+    spec = importlib.util.spec_from_file_location("hermes_dashboard_plugin_foundry_badstep", API)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    app = FastAPI()
+    app.include_router(mod.router, prefix="/api/plugins/foundry")
+    r = TestClient(app).get("/api/plugins/foundry/snapshot")
+    assert r.status_code == 503 and "FOUNDRY_REPLAY_STEP_SECONDS" in r.json()["detail"]
+
+
+def test_replay_unusable_recording_is_a_503(monkeypatch, tmp_path):
+    bad = tmp_path / "r.json"
+    bad.write_text('{"kind": "foundry-recording", "v": 1}')  # header only
+    monkeypatch.setenv("FOUNDRY_REPLAY", str(bad))
+    spec = importlib.util.spec_from_file_location("hermes_dashboard_plugin_foundry_badrec", API)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    app = FastAPI()
+    app.include_router(mod.router, prefix="/api/plugins/foundry")
+    c = TestClient(app)
+    for path in ("snapshot", "events"):
+        r = c.get(f"/api/plugins/foundry/{path}")
+        assert r.status_code == 503 and "unusable" in r.json()["detail"] and "base" in r.json()["detail"]

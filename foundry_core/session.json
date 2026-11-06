@@ -1,0 +1,1053 @@
+{
+ "base": {
+  "snapshot": {
+   "cursor": "rec-1.0",
+   "epoch": "rec-1",
+   "last_seq": 0,
+   "mode": "fixture",
+   "paused": false,
+   "projects": [
+    {
+     "cards": [
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [
+        {
+         "path": "docs/atlas/auth.md",
+         "title": "auth.md"
+        }
+       ],
+       "epic_id": "atlas:e1",
+       "id": "atlas:t01",
+       "status": "done",
+       "status_native": "done",
+       "title": "Token refresh endpoint",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "atlas:e1",
+       "id": "atlas:t02",
+       "status": "done",
+       "status_native": "done",
+       "title": "Rotate signing keys",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": "coder",
+       "blocked_on": null,
+       "claimed_by": "fx:1",
+       "docs": [
+        {
+         "path": "docs/atlas/sessions.md",
+         "title": "sessions.md"
+        }
+       ],
+       "epic_id": "atlas:e1",
+       "id": "atlas:t03",
+       "status": "running",
+       "status_native": "running",
+       "title": "Session revoke on password change",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "atlas:e1",
+       "id": "atlas:t04",
+       "status": "open",
+       "status_native": "todo",
+       "title": "Rate limit login attempts",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "atlas:e2",
+       "id": "atlas:t05",
+       "status": "done",
+       "status_native": "done",
+       "title": "Invoice PDF export",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": "coder",
+       "blocked_on": null,
+       "claimed_by": "fx:3",
+       "docs": [
+        {
+         "path": "docs/atlas/proration.md",
+         "title": "proration.md"
+        }
+       ],
+       "epic_id": "atlas:e2",
+       "id": "atlas:t06",
+       "status": "running",
+       "status_native": "running",
+       "title": "Proration on plan change",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [
+        {
+         "path": "docs/atlas/webhooks.md",
+         "title": "webhooks.md"
+        }
+       ],
+       "epic_id": "atlas:e2",
+       "id": "atlas:t07",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Webhook retry backoff",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": "coder",
+       "blocked_on": "human",
+       "claimed_by": "fx:2",
+       "docs": [],
+       "epic_id": "atlas:e2",
+       "id": "atlas:t08",
+       "status": "blocked",
+       "status_native": "blocked",
+       "title": "Refund reconciliation job",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "atlas:e3",
+       "id": "atlas:t09",
+       "status": "done",
+       "status_native": "done",
+       "title": "Tokenizer upgrade",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "atlas:e3",
+       "id": "atlas:t10",
+       "status": "open",
+       "status_native": "triage",
+       "title": "Faceted filters",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "atlas:e3",
+       "id": "atlas:t11",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Index warmup on deploy",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [
+        {
+         "path": "docs/atlas/eval.md",
+         "title": "eval.md"
+        }
+       ],
+       "epic_id": "atlas:e3",
+       "id": "atlas:t12",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Search relevance eval set",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": null,
+       "id": "atlas:t13",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Health endpoint cleanup",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": null,
+       "id": "atlas:t14",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Drop legacy v1 routes",
+       "updated_at": "2026-11-06T00:00:00Z"
+      }
+     ],
+     "epics": [
+      {
+       "id": "atlas:e1",
+       "title": "Auth"
+      },
+      {
+       "id": "atlas:e2",
+       "title": "Billing"
+      },
+      {
+       "id": "atlas:e3",
+       "title": "Search"
+      }
+     ],
+     "id": "atlas",
+     "name": "atlas-api"
+    },
+    {
+     "cards": [
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "harbor:e4",
+       "id": "harbor:t15",
+       "status": "done",
+       "status_native": "done",
+       "title": "Address autocomplete",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "harbor:e4",
+       "id": "harbor:t16",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Guest checkout",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "harbor:e4",
+       "id": "harbor:t17",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Promo code field",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [
+        {
+         "path": "docs/harbor/pay.md",
+         "title": "pay.md"
+        }
+       ],
+       "epic_id": "harbor:e4",
+       "id": "harbor:t18",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Apple Pay button",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "harbor:e5",
+       "id": "harbor:t19",
+       "status": "done",
+       "status_native": "done",
+       "title": "Welcome tour",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "harbor:e5",
+       "id": "harbor:t20",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Import from CSV",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "harbor:e5",
+       "id": "harbor:t21",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Empty-state illustrations",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [
+        {
+         "path": "docs/harbor/tokens.md",
+         "title": "tokens.md"
+        }
+       ],
+       "epic_id": "harbor:e6",
+       "id": "harbor:t22",
+       "status": "done",
+       "status_native": "done",
+       "title": "Dark mode tokens",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "harbor:e6",
+       "id": "harbor:t23",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Button focus ring",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "harbor:e6",
+       "id": "harbor:t24",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Toast stacking",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "harbor:e6",
+       "id": "harbor:t25",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Modal scroll lock",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": null,
+       "id": "harbor:t26",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Remove unused icons",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [
+        {
+         "path": "docs/harbor/budget.md",
+         "title": "budget.md"
+        }
+       ],
+       "epic_id": null,
+       "id": "harbor:t27",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Bundle size budget",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": null,
+       "id": "harbor:t28",
+       "status": "done",
+       "status_native": "done",
+       "title": "Fix flaky checkout e2e",
+       "updated_at": "2026-11-06T00:00:00Z"
+      }
+     ],
+     "epics": [
+      {
+       "id": "harbor:e4",
+       "title": "Checkout"
+      },
+      {
+       "id": "harbor:e5",
+       "title": "Onboarding"
+      },
+      {
+       "id": "harbor:e6",
+       "title": "Design system"
+      }
+     ],
+     "id": "harbor",
+     "name": "harbor-web"
+    },
+    {
+     "cards": [
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [
+        {
+         "path": "docs/lumen/quickstart.md",
+         "title": "quickstart.md"
+        }
+       ],
+       "epic_id": "lumen:e7",
+       "id": "lumen:t29",
+       "status": "done",
+       "status_native": "done",
+       "title": "Quickstart rewrite",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "lumen:e7",
+       "id": "lumen:t30",
+       "status": "review",
+       "status_native": "review",
+       "title": "Migration guide v2",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "lumen:e7",
+       "id": "lumen:t31",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Troubleshooting page",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "lumen:e7",
+       "id": "lumen:t32",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Glossary",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [
+        {
+         "path": "docs/lumen/cli.md",
+         "title": "cli.md"
+        }
+       ],
+       "epic_id": "lumen:e8",
+       "id": "lumen:t33",
+       "status": "open",
+       "status_native": "ready",
+       "title": "CLI reference generator",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "lumen:e8",
+       "id": "lumen:t34",
+       "status": "open",
+       "status_native": "ready",
+       "title": "API changelog automation",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "lumen:e8",
+       "id": "lumen:t35",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Versioned URLs",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "lumen:e8",
+       "id": "lumen:t36",
+       "status": "done",
+       "status_native": "done",
+       "title": "Broken link audit",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": null,
+       "id": "lumen:t37",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Search box styling",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": null,
+       "id": "lumen:t38",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Contributor guide",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": null,
+       "id": "lumen:t39",
+       "status": "open",
+       "status_native": "ready",
+       "title": "Screenshot refresh",
+       "updated_at": "2026-11-06T00:00:00Z"
+      },
+      {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": null,
+       "id": "lumen:t40",
+       "status": "done",
+       "status_native": "done",
+       "title": "Spelling pass",
+       "updated_at": "2026-11-06T00:00:00Z"
+      }
+     ],
+     "epics": [
+      {
+       "id": "lumen:e7",
+       "title": "Guides"
+      },
+      {
+       "id": "lumen:e8",
+       "title": "Reference"
+      }
+     ],
+     "id": "lumen",
+     "name": "lumen-docs"
+    }
+   ],
+   "v": 1,
+   "workers": [
+    {
+     "card_id": "atlas:t03",
+     "id": "fx:1",
+     "name": "Ada",
+     "state": "working"
+    },
+    {
+     "card_id": "atlas:t08",
+     "id": "fx:2",
+     "name": "Bram",
+     "state": "waiting_human"
+    },
+    {
+     "card_id": "atlas:t06",
+     "id": "fx:3",
+     "name": "Cato",
+     "state": "looping"
+    },
+    {
+     "card_id": null,
+     "id": "fx:4",
+     "name": "Dee",
+     "state": "idle"
+    }
+   ]
+  },
+  "transcripts": {
+   "fx:1": [
+    {
+     "role": "user",
+     "seq": 1,
+     "text": "Revoke every session when the password changes."
+    },
+    {
+     "role": "assistant",
+     "seq": 2,
+     "text": "Reading the session store to find where tokens are issued."
+    },
+    {
+     "role": "tool",
+     "seq": 3,
+     "text": "grep -rn 'issue_token' src/ -> 4 matches"
+    },
+    {
+     "role": "assistant",
+     "seq": 4,
+     "text": "Adding a revoke-all call to the password-change handler."
+    }
+   ],
+   "fx:2": [
+    {
+     "role": "user",
+     "seq": 1,
+     "text": "Reconcile refunds against the ledger nightly."
+    },
+    {
+     "role": "assistant",
+     "seq": 2,
+     "text": "The ledger has two currencies for one refund. Which one is canonical?"
+    },
+    {
+     "role": "tool",
+     "seq": 3,
+     "text": "ask_human: waiting for an answer"
+    }
+   ],
+   "fx:3": [
+    {
+     "role": "user",
+     "seq": 1,
+     "text": "Prorate on plan change."
+    },
+    {
+     "role": "assistant",
+     "seq": 2,
+     "text": "Running the proration test."
+    },
+    {
+     "role": "tool",
+     "seq": 3,
+     "text": "pytest tests/test_proration.py -> 1 failed"
+    },
+    {
+     "role": "assistant",
+     "seq": 4,
+     "text": "Running the proration test."
+    },
+    {
+     "role": "tool",
+     "seq": 5,
+     "text": "pytest tests/test_proration.py -> 1 failed"
+    },
+    {
+     "role": "assistant",
+     "seq": 6,
+     "text": "Running the proration test."
+    },
+    {
+     "role": "tool",
+     "seq": 7,
+     "text": "pytest tests/test_proration.py -> 1 failed"
+    }
+   ],
+   "fx:4": []
+  }
+ },
+ "kind": "foundry-recording",
+ "steps": [
+  {
+   "command": {
+    "card_id": "atlas:t04",
+    "profile": "reviewer",
+    "type": "assign"
+   },
+   "events": [
+    {
+     "payload": {
+      "card": {
+       "assignee_profile": "reviewer",
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "atlas:e1",
+       "id": "atlas:t04",
+       "status": "open",
+       "status_native": "todo",
+       "title": "Rate limit login attempts",
+       "updated_at": "2026-11-06T00:00:01Z"
+      }
+     },
+     "seq": 1,
+     "ts": "2026-11-06T00:00:01Z",
+     "type": "card_upsert"
+    }
+   ],
+   "transcript": {}
+  },
+  {
+   "command": {
+    "card_id": "atlas:t08",
+    "text": "Refunds over 30 days go to the manual queue.",
+    "type": "comment"
+   },
+   "events": [
+    {
+     "payload": {
+      "author": "you",
+      "card_id": "atlas:t08",
+      "text": "Refunds over 30 days go to the manual queue."
+     },
+     "seq": 2,
+     "ts": "2026-11-06T00:00:02Z",
+     "type": "comment_added"
+    },
+    {
+     "payload": {
+      "card": {
+       "assignee_profile": "coder",
+       "blocked_on": null,
+       "claimed_by": "fx:2",
+       "docs": [],
+       "epic_id": "atlas:e2",
+       "id": "atlas:t08",
+       "status": "running",
+       "status_native": "running",
+       "title": "Refund reconciliation job",
+       "updated_at": "2026-11-06T00:00:03Z"
+      }
+     },
+     "seq": 3,
+     "ts": "2026-11-06T00:00:03Z",
+     "type": "card_upsert"
+    },
+    {
+     "payload": {
+      "worker": {
+       "card_id": "atlas:t08",
+       "id": "fx:2",
+       "name": "Bram",
+       "state": "working"
+      }
+     },
+     "seq": 4,
+     "ts": "2026-11-06T00:00:04Z",
+     "type": "worker_upsert"
+    }
+   ],
+   "transcript": {
+    "fx:2": [
+     {
+      "role": "user",
+      "seq": 4,
+      "text": "Refunds over 30 days go to the manual queue."
+     },
+     {
+      "role": "assistant",
+      "seq": 5,
+      "text": "Thanks, continuing with that answer."
+     }
+    ]
+   }
+  },
+  {
+   "command": {
+    "text": "You are repeating the proration test; skip it and read the diff.",
+    "type": "message",
+    "worker_id": "fx:3"
+   },
+   "events": [
+    {
+     "payload": {
+      "card": {
+       "assignee_profile": "coder",
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [
+        {
+         "path": "docs/atlas/proration.md",
+         "title": "proration.md"
+        }
+       ],
+       "epic_id": "atlas:e2",
+       "id": "atlas:t06",
+       "status": "done",
+       "status_native": "done",
+       "title": "Proration on plan change",
+       "updated_at": "2026-11-06T00:00:05Z"
+      }
+     },
+     "seq": 5,
+     "ts": "2026-11-06T00:00:05Z",
+     "type": "card_upsert"
+    },
+    {
+     "payload": {
+      "worker": {
+       "card_id": null,
+       "id": "fx:3",
+       "name": "Cato",
+       "state": "idle"
+      }
+     },
+     "seq": 6,
+     "ts": "2026-11-06T00:00:06Z",
+     "type": "worker_upsert"
+    }
+   ],
+   "transcript": {
+    "fx:3": [
+     {
+      "role": "user",
+      "seq": 8,
+      "text": "You are repeating the proration test; skip it and read the diff."
+     },
+     {
+      "role": "assistant",
+      "seq": 9,
+      "text": "Understood."
+     }
+    ]
+   }
+  },
+  {
+   "command": {
+    "card_id": "atlas:t07",
+    "type": "claim",
+    "worker_id": "fx:4"
+   },
+   "events": [
+    {
+     "payload": {
+      "card": {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [
+        {
+         "path": "docs/atlas/webhooks.md",
+         "title": "webhooks.md"
+        }
+       ],
+       "epic_id": "atlas:e2",
+       "id": "atlas:t07",
+       "status": "done",
+       "status_native": "done",
+       "title": "Webhook retry backoff",
+       "updated_at": "2026-11-06T00:00:07Z"
+      }
+     },
+     "seq": 7,
+     "ts": "2026-11-06T00:00:07Z",
+     "type": "card_upsert"
+    }
+   ],
+   "transcript": {}
+  },
+  {
+   "command": {
+    "card_id": "harbor:t18",
+    "type": "new_worker"
+   },
+   "events": [
+    {
+     "payload": {
+      "card": {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": "fx:5",
+       "docs": [
+        {
+         "path": "docs/harbor/pay.md",
+         "title": "pay.md"
+        }
+       ],
+       "epic_id": "harbor:e4",
+       "id": "harbor:t18",
+       "status": "running",
+       "status_native": "running",
+       "title": "Apple Pay button",
+       "updated_at": "2026-11-06T00:00:08Z"
+      }
+     },
+     "seq": 8,
+     "ts": "2026-11-06T00:00:08Z",
+     "type": "card_upsert"
+    },
+    {
+     "payload": {
+      "worker": {
+       "card_id": "harbor:t18",
+       "id": "fx:5",
+       "name": "Esme",
+       "state": "working"
+      }
+     },
+     "seq": 9,
+     "ts": "2026-11-06T00:00:09Z",
+     "type": "worker_upsert"
+    }
+   ],
+   "transcript": {}
+  },
+  {
+   "command": {
+    "card_id": "lumen:t30",
+    "status_native": "done",
+    "type": "set_status"
+   },
+   "events": [
+    {
+     "payload": {
+      "card": {
+       "assignee_profile": null,
+       "blocked_on": null,
+       "claimed_by": null,
+       "docs": [],
+       "epic_id": "lumen:e7",
+       "id": "lumen:t30",
+       "status": "done",
+       "status_native": "done",
+       "title": "Migration guide v2",
+       "updated_at": "2026-11-06T00:00:10Z"
+      }
+     },
+     "seq": 10,
+     "ts": "2026-11-06T00:00:10Z",
+     "type": "card_upsert"
+    }
+   ],
+   "transcript": {}
+  },
+  {
+   "command": {
+    "on": true,
+    "type": "stand"
+   },
+   "events": [
+    {
+     "payload": {
+      "paused": true
+     },
+     "seq": 11,
+     "ts": "2026-11-06T00:00:11Z",
+     "type": "paused"
+    }
+   ],
+   "transcript": {}
+  },
+  {
+   "command": {
+    "on": false,
+    "type": "stand"
+   },
+   "events": [
+    {
+     "payload": {
+      "paused": false
+     },
+     "seq": 12,
+     "ts": "2026-11-06T00:00:12Z",
+     "type": "paused"
+    }
+   ],
+   "transcript": {}
+  },
+  {
+   "command": {
+    "card_id": "atlas:t03",
+    "status_native": "blocked",
+    "type": "set_status"
+   },
+   "events": [
+    {
+     "payload": {
+      "card": {
+       "assignee_profile": "coder",
+       "blocked_on": "human",
+       "claimed_by": "fx:1",
+       "docs": [
+        {
+         "path": "docs/atlas/sessions.md",
+         "title": "sessions.md"
+        }
+       ],
+       "epic_id": "atlas:e1",
+       "id": "atlas:t03",
+       "status": "blocked",
+       "status_native": "blocked",
+       "title": "Session revoke on password change",
+       "updated_at": "2026-11-06T00:00:13Z"
+      }
+     },
+     "seq": 13,
+     "ts": "2026-11-06T00:00:13Z",
+     "type": "card_upsert"
+    },
+    {
+     "payload": {
+      "worker": {
+       "card_id": "atlas:t03",
+       "id": "fx:1",
+       "name": "Ada",
+       "state": "waiting_human"
+      }
+     },
+     "seq": 14,
+     "ts": "2026-11-06T00:00:14Z",
+     "type": "worker_upsert"
+    }
+   ],
+   "transcript": {}
+  }
+ ],
+ "v": 1
+}

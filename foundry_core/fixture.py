@@ -2,7 +2,7 @@
 
 Each command has a scripted response. A command edits working copies of the cards and workers it touches
 (a ``_Plan``); on success the plan emits one full-object ``card_upsert`` / ``worker_upsert`` per object that
-actually changed (contract draft 3), and the shared reducer applies them. A failed command emits nothing and
+actually changed (contract draft 4), and the shared reducer applies them. A failed command emits nothing and
 changes nothing. ``claimed_by`` on the card is the only ownership fact; a worker's ``card_id`` is derived from it.
 ``reset`` starts a new epoch. Everything here is simulated: the pane labels fixture mode "simulated".
 """
@@ -18,6 +18,16 @@ from .reducer import apply_events, apply_snapshot, make_cursor, parse_cursor, to
 
 TRANSCRIPT_CAP = 200
 LINE_CHARS = 2000
+
+
+def page_transcript(all_lines: list[dict[str, Any]], limit: int, before: int | None) -> dict[str, Any]:
+    """Contract paging over ascending-seq lines: at most ``limit`` (cap 200), ``before`` exclusive."""
+    limit = max(1, min(int(limit), TRANSCRIPT_CAP))
+    lines = [ln for ln in all_lines if before is None or ln["seq"] < before]
+    page = lines[-limit:]
+    truncated = len(lines) > len(page)
+    return {"lines": copy.deepcopy(page), "truncated": truncated,
+            "next_before": page[0]["seq"] if truncated else None}
 
 
 class _Reject(Exception):
@@ -141,12 +151,7 @@ class FixtureSource:
         """
         if worker_id not in self._transcripts:
             raise KeyError(worker_id)
-        limit = max(1, min(int(limit), TRANSCRIPT_CAP))
-        lines = [ln for ln in self._transcripts[worker_id] if before is None or ln["seq"] < before]
-        page = lines[-limit:]
-        truncated = len(lines) > len(page)
-        return {"lines": copy.deepcopy(page), "truncated": truncated,
-                "next_before": page[0]["seq"] if truncated else None}
+        return page_transcript(self._transcripts[worker_id], limit, before)
 
     def command(self, cmd: dict[str, Any]) -> dict[str, Any]:
         handler = getattr(self, "_cmd_" + str(cmd.get("type", "")), None) if isinstance(cmd, dict) else None
