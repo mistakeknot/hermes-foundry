@@ -1,49 +1,85 @@
-# Foundry contract (draft 1, owned by the coordinator; change it only by PR and tell the other executor)
+# Foundry contract (draft 2, proposed)
 
-Design choice: one normalized model shared by the live plugin, the fixture state machine and the pane. Kanban stays the source of truth in live mode.
+**Status of this document: proposed.** The only decision mk made is the idea, on card GSVP-10 ("3D workspace to visualize and operate the software factory in hermes"). Everything here is a design choice, proposed and not decided: the model, the endpoints, the ownership of this file, the change procedure, the transport, the ordering rules and every "must", "never" and "only" below. Nothing in this file records an mk ruling other than the idea. Proposed ownership: the coordinator edits this file; a change goes in through a PR and the executors are told. Revision 2 answers the cross-lab review of draft 1 (assignment vs. claim, board-qualified ids, event payloads, status mapping, transcripts, live vs. fixture commands).
+
+Proposed purpose: one normalized model shared by the live plugin, the fixture state machine and the pane. In live mode the Hermes kanban stays the source of truth.
+
+## Ids
+
+Every id is global: `"<board>:<native_id>"` (for example `"main:t_91ab"`). A board slug never contains `:`. Cards, epics and projects (a project is one board) carry global ids, so a command names its target with one id and no separate board field. Worker ids are `"<board>:<session_or_run_id>"` in live mode and `"fx:<n>"` in fixture mode.
 
 ## Snapshot (GET /api/plugins/foundry/snapshot)
+
 ```json
-{"v":1,"mode":"fixture|live","cursor":"<opaque>",
- "projects":[{"id":"p1","name":"...","epics":[{"id":"e1","title":"..."}],
-   "cards":[{"id":"c1","title":"...","epic_id":"e1|null (ungrouped limb)","status":"open|claimed|blocked|done",
-             "assignee":"w1|null","blocked_on":"human|null","docs":[{"path":"...","title":"..."}],"updated_at":"RFC3339"}]}],
- "workers":[{"id":"w1","name":"...","state":"working|waiting_human|looping|idle","card_id":"c1|null"}],
+{"v":1,"mode":"fixture|live","epoch":"<opaque>","cursor":"<opaque>",
+ "projects":[{"id":"main","name":"...","epics":[{"id":"main:e1","title":"..."}],
+   "cards":[{"id":"main:t1","title":"...","epic_id":"main:e1|null",
+             "status":"open|running|blocked|review|done",
+             "status_native":"triage|todo|scheduled|ready|running|blocked|review|done|<anything else, passed through>",
+             "assignee_profile":"profile-name|null",
+             "claimed_by":"worker-id|null",
+             "blocked_on":"human|null",
+             "docs":[{"path":"...","title":"..."}],"updated_at":"RFC3339"}]}],
+ "workers":[{"id":"main:s1","name":"...","state":"working|waiting_human|looping|idle|unknown",
+             "card_id":"main:t1|null"}],
  "paused":false}
 ```
-A worker state the source cannot give is omitted (state absent), never guessed.
 
-## Events (GET /api/plugins/foundry/events?since=<cursor>)
-`{"seq":int,"ts":"RFC3339","type":"card_created|card_status|card_assigned|card_commented|worker_state|worker_moved|paused|reset","payload":{...}}`
-One reducer (applySnapshot + applyEvent, pure, same logic in Python and TS or a single shared definition with tests) builds state from snapshot + events: stable ids, ordered by seq, duplicates ignored, resync = refetch snapshot.
+Rules (proposed):
 
-## Commands (POST /api/plugins/foundry/command)
-`assign{card_id,worker_id|"new"}`, `set_status{card_id,status}`, `comment{card_id,text}`, `message{worker_id,text}`, `stand{on}`, `reset{}` (fixture only).
-Reply `{ok:bool,error?:string}`. A failed command changes no displayed state.
+- **Assignment and ownership are three different things.** `assignee_profile` is the Hermes profile the card is assigned to (what `assign_task(conn, task_id, profile)` writes). `claimed_by` is the worker (session or run) that actually holds the card; it is set only from a claim or run record, never inferred from the profile. A worker's `card_id` is the same fact seen from the other side and must agree with `claimed_by`.
+- **Atomic snapshot.** The server reads the snapshot and its `cursor` in one consistent read, so replaying events after `cursor` on top of the snapshot neither skips nor repeats a change.
+- **Unknown values are shown, not guessed.** A worker state the source cannot give is `"unknown"` and the pane draws a neutral climber. A native status outside the table below is passed through in `status_native` and drawn as a grey scale labelled with that text; `status` is then `"open"` only if the native workflow marks it as not started, otherwise the card is drawn grey and its `status` is `"unknown"`.
+- **Status mapping (display from native).** `triage`, `todo`, `scheduled`, `ready` map to `open`. `running` maps to `running`. `blocked` maps to `blocked`. `review` maps to `review`. `done` maps to `done`. `archived` cards are omitted. The fixture uses the same native names.
 
-## Pane adapter
-The pane talks only to `FoundryApi { snapshot(); subscribe(cb); command(c) }`. The transport behind it (ctx.rest to our router, or desktop socket) is decided by the Nov 7 integration gate; the pane code does not change.
+## Events (GET /api/plugins/foundry/events?since=<cursor>&epoch=<epoch>)
 
-## Fixture
-3 projects, ~40 cards, 4 workers, one loop (worker looping), one card blocked on a human. A deterministic state machine: each command has a scripted response, `reset` restores the start. Runs with no model calls or credentials. The pane shows a "simulated" badge in fixture mode.
+Reply: `{"v":1,"epoch":"<opaque>","cursor":"<opaque>","events":[Event...],"resync":false}`.
 
-## Wire details (additive; approved by the coordinator, Nov 6)
-Design choice: these fix what the draft left open. No field above is removed or renamed.
+`Event = {"seq":int,"ts":"RFC3339","type":T,"payload":P}` with these payloads:
 
-**Cursor.** Opaque to clients. The Python side uses `"<epoch>.<seq>"`; `seq` only grows, including across `reset`. A client must treat any cursor it did not get from the server as invalid.
-
-**Events response.** `GET /events?since=<cursor>` returns `{"v":1,"cursor":"<head>","events":[...],"resync":false}`. `resync:true` (with `events:[]`) means refetch the snapshot: the cursor is missing, malformed, from another epoch (server restart) or ahead of the head. A client that applies events and finds a seq gap, or an event that names an unknown card or worker, must also resync. Polling is the baseline; a socket, where one exists, is only an accelerator (it is a no-op on OAuth remotes).
-
-**Event payloads** (the reducer ignores payload keys it does not know and event types it does not know, but still advances seq):
 | type | payload |
 |---|---|
-| `card_created` | `{project_id, card:{...full card}}` (idempotent by card id) |
-| `card_status` | `{card_id, status, blocked_on:"human"\|null, updated_at}` |
-| `card_assigned` | `{card_id, worker_id\|null, updated_at}` |
-| `card_commented` | `{card_id, author, text, updated_at}` (only moves `updated_at`; comments are fetched on demand) |
-| `worker_state` | `{worker_id, name?, state?, card_id?}`: upserts a worker; a key that is present is applied, `state:null` removes the state (the source cannot give it) |
-| `worker_moved` | `{worker_id, card_id\|null}` |
-| `paused` | `{paused:bool}` |
-| `reset` | `{snapshot:{...}}` replaces all state |
+| `card_created` | `{card: <full card object>}` |
+| `card_status` | `{card_id, status, status_native}` |
+| `card_assigned` | `{card_id, assignee_profile}` (profile assignment only) |
+| `card_claimed` | `{card_id, claimed_by}` (`null` when released) |
+| `card_commented` | `{card_id, author, text}` |
+| `worker_state` | `{worker_id, state, card_id}` |
+| `paused` | `{paused}` |
 
-**Commands.** Always HTTP 200 with `{ok:bool,error?:string}`; an unknown type, unknown id, bad status, empty text or a refused action gives `ok:false` and emits no event. `reset` on live gives `ok:false`. Fixture rules: assigning a blocked or done card is refused; a done card has no assignee; a comment on a card blocked on a human unblocks it and the waiting worker resumes; `stand{on:true}` refuses new work until `stand{on:false}`.
+Cursor and ordering rules (proposed):
+
+- `seq` is strictly increasing within one `epoch`. The cursor is opaque to the pane; the server advances it to the `seq` of the last event it returned (or keeps it when `events` is empty). The pane stores the cursor from the latest reply and sends it back unchanged.
+- The pane applies events in `seq` order and ignores any event whose `seq` is not greater than the last applied one (duplicates and replays).
+- `resync:true` (a cursor the server no longer holds, or an epoch mismatch) means: discard events, refetch the snapshot.
+- **Epoch.** The epoch changes whenever the history is discarded: a fixture `reset`, a server restart that loses the fixture state, or live-mode cursor loss. A request with an old epoch gets `resync:true` and the new epoch. This is how `reset` sequences with clients: after `reset` returns, every client's next poll resyncs.
+- **Reconnect.** The pane polls this endpoint at a fixed short interval (the proposed fallback, because `ctx.socket` does nothing on OAuth remotes) and resyncs on any error, `resync:true` or a gap. A socket or other push channel may only shorten the poll delay; correctness never depends on it.
+
+Proposed reducer: `applySnapshot` and `applyEvent`, pure, one shared definition (or the same logic in Python and TS with a shared test vector file), covering stable ids, ordering, duplicates and resync.
+
+## Commands (POST /api/plugins/foundry/command)
+
+Reply: HTTP 200 with `{"ok":bool,"error?":string}`; a failed command changes no displayed state, and the pane shows the error before it changes anything.
+
+Live commands (proposed floor; each maps to a verified Hermes action):
+
+| command | live action |
+|---|---|
+| `set_status{card_id, status_native}` | the kanban PATCH, limited to the native workflow's manual moves; a move the workflow refuses returns `ok:false` with the reason |
+| `assign{card_id, profile}` | `assign_task(conn, task_id, profile)`: assigns the profile. It does **not** claim the card. |
+| `comment{card_id, text}` | `add_comment` |
+
+Proposed optional commands, **fixture only until each is proven against stock Hermes on the gate days, and drawn with a "simulated" badge when not live**: `claim{card_id, worker_id}` (a simulated claim), `message{worker_id, text}`, `stand{on}`, `new_worker{card_id}` (a simulated launch), and `reset{}`. The cited delegation API configures routing and has no worker-launch action, so `new_worker` has no live implementation until a launch call is found and shown to work on stock Hermes.
+
+## Transcripts (proposed, optional)
+
+`GET /api/plugins/foundry/transcript?worker_id=<id>&limit=<n>&before=<cursor>` returns `{"lines":[{"seq":int,"role":"user|assistant|tool","text":"..."}],"truncated":bool}`: at most `limit` lines (server cap 200), text truncated per line, newest last. Fixture mode serves scripted lines. If the live source does not give transcripts by the end of Nov 8, the worker panel shows only the worker's name, state and held card, and the transcript view leaves the required demo.
+
+## Pane adapter
+
+The pane talks only to `FoundryApi { snapshot(); subscribe(cb); command(c); transcript?(id) }`. The transport behind it is our own router, `/api/plugins/foundry` (one plugin's REST cannot reach another's through `ctx.rest`); the Nov 7 integration gate decides whether polling alone is enough. The pane code does not change with the transport.
+
+## Fixture
+
+Proposed: 3 projects (boards), about 40 cards, 4 workers, one loop (a worker `looping`), one card blocked on a human. A deterministic state machine: each fixture command has a scripted response and `reset` restores the start (new epoch). It runs with no model calls or credentials. The pane shows a "simulated" badge in fixture mode and on any simulated action.
