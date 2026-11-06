@@ -182,3 +182,124 @@ def test_replay_source_refuses_every_tool_and_is_marked_simulated():
     for out in (_out(t.assign({"card_id": "a:1", "profile": "coder"})), _out(t.stand({"on": True})),
                 _out(t.message({"worker_id": "fx:1", "text": "hi"}))):
         assert out["ok"] is False and out["error"] and out["simulated"] is True
+
+
+# -- simulated is derived from the source mode on every path -------------------------------------------------------
+
+BAD_CALLS = {
+    "assign": lambda t: t.assign({"card_id": "", "profile": "coder"}),
+    "stand": lambda t: t.stand({"on": "yes"}),
+    "message": lambda t: t.message({"worker_id": "", "text": "x"}),
+}
+
+
+class _Mode(_StubSource):
+    def __init__(self, mode, raises=False):
+        super().__init__()
+        self.mode, self._raises = mode, raises
+
+    def command(self, body):
+        if self._raises:
+            raise ValueError("kaboom")
+        return super().command(body)
+
+
+@pytest.mark.parametrize("mode,expected", [("fixture", True), ("replay", True), ("live", False)])
+@pytest.mark.parametrize("name", sorted(BAD_CALLS))
+def test_simulated_on_validation_errors_follows_the_source_mode(mode, expected, name):
+    out = _out(BAD_CALLS[name](FoundryTools(make=lambda: _Mode(mode))))
+    assert out["ok"] is False and out["simulated"] is expected
+
+
+@pytest.mark.parametrize("mode,expected", [("fixture", True), ("replay", True), ("live", False)])
+def test_simulated_when_the_command_raises_follows_the_source_mode(mode, expected):
+    t = FoundryTools(make=lambda: _Mode(mode, raises=True))
+    out = _out(t.assign({"card_id": "a:1", "profile": "coder"}))
+    assert out["ok"] is False and "kaboom" in out["error"] and out["simulated"] is expected
+
+
+def test_simulated_on_invalid_fixture_arguments_and_a_real_fixture_failure(tools):
+    for name in BAD_CALLS:
+        out = _out(BAD_CALLS[name](tools))
+        assert out["ok"] is False and out["simulated"] is True
+    out = _out(tools.assign({"card_id": "ghost:nope", "profile": "coder"}))  # the fixture itself refuses
+    assert out["ok"] is False and out["simulated"] is True
+
+
+def test_simulated_on_replay_validation_failures(tmp_path):
+    from foundry_core.service import make_source
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    t = FoundryTools(make=lambda: make_source({"FOUNDRY_REPLAY": str(bad)}))
+    assert t.available() is False
+    for out in (_out(t.assign({"card_id": "a:1", "profile": "coder"})), _out(t.stand({"on": True})),
+                _out(t.message({"worker_id": "fx:1", "text": "hi"})), _out(BAD_CALLS["stand"](t))):
+        assert out["ok"] is False and out["simulated"] is True
+        assert "unusable" in out["error"] or "on must be" in out["error"]
+
+
+def test_simulated_when_the_source_cannot_be_built_follows_the_configured_mode(monkeypatch):
+    def boom():
+        raise RuntimeError("no source")
+    monkeypatch.delenv("FOUNDRY_MODE", raising=False)
+    assert _out(FoundryTools(make=boom).stand({"on": True}))["simulated"] is True
+    monkeypatch.setenv("FOUNDRY_MODE", "live")
+    t = FoundryTools(make=boom)
+    for out in (_out(t.stand({"on": True})), _out(BAD_CALLS["stand"](t))):
+        assert out["ok"] is False and out["simulated"] is False
+
+
+# -- a failing factory is built once ----------------------------------------------------------------------------------
+
+class _Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def test_a_failing_factory_is_called_once_until_reset_or_the_retry_interval():
+    calls = []
+
+    def boom():
+        calls.append(1)
+        raise RuntimeError("unreadable board")
+    clock = _Clock()
+    t = FoundryTools(make=boom, retry_seconds=30, clock=clock)
+    for _ in range(5):
+        assert t.available() is False
+    assert _out(t.stand({"on": True}))["ok"] is False
+    assert len(calls) == 1
+    clock.now += 29
+    assert t.available() is False and len(calls) == 1   # still inside the interval
+    clock.now += 2
+    assert t.available() is False and len(calls) == 2   # interval over: one retry
+    t.reset()
+    assert t.available() is False and len(calls) == 3   # explicit reset: retry at once
+
+
+def test_a_retry_after_the_cause_is_fixed_builds_the_source():
+    state = {"ok": False}
+
+    def make():
+        if not state["ok"]:
+            raise RuntimeError("down")
+        return FixtureSource(epoch_prefix="fxr")
+    clock = _Clock()
+    t = FoundryTools(make=make, retry_seconds=30, clock=clock)
+    assert t.available() is False
+    state["ok"] = True
+    assert t.available() is False   # cached failure
+    clock.now += 31
+    assert t.available() is True and _out(t.stand({"on": True}))["ok"] is True
+
+
+def test_module_reset_clears_the_default_tools(monkeypatch):
+    import foundry_core.tools as mod
+    monkeypatch.setattr(mod, "_default", None)
+    first = mod.default_tools()
+    assert mod.default_tools() is first
+    first._failure, first._failed_at = "cached", 1e12
+    mod.reset()
+    assert first._failure is None and first._source is None

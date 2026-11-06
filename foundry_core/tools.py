@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+import time
 from typing import Any, Callable
 
 from .service import make_source, run_command
@@ -26,6 +28,7 @@ from .service import make_source, run_command
 log = logging.getLogger("foundry.tools")
 
 TEXT_MAX = 2000  # same cut as a transcript line
+RETRY_SECONDS = 30.0  # a failed source construction is not retried before this, or until reset()
 
 ASSIGN_DESCRIPTION = (
     "Assign a Hermes profile to a Foundry kanban card (card_id is '<board>:<task>'). Assigns only; it does not "
@@ -68,19 +71,55 @@ MESSAGE_PARAMETERS = {
 }
 
 
-class FoundryTools:
-    """Holds the tool process's source and serialises calls (the sources are not thread-safe)."""
+def _configured_simulated(env: dict[str, str] | None = None) -> bool:
+    """The simulated flag when no source exists: only FOUNDRY_MODE=live means a live board."""
+    env = os.environ if env is None else env
+    return env.get("FOUNDRY_MODE", "fixture").strip().lower() != "live"
 
-    def __init__(self, make: Callable[[], Any] = make_source) -> None:
+
+class FoundryTools:
+    """Holds the tool process's source and serialises calls (the sources are not thread-safe).
+
+    A failed construction is cached for ``retry_seconds`` (or until ``reset()``), so repeated registry checks do not
+    rebuild an unusable source each time.
+    """
+
+    def __init__(self, make: Callable[[], Any] = make_source, *, retry_seconds: float = RETRY_SECONDS,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self._make = make
+        self._retry = retry_seconds
+        self._clock = clock
         self._lock = threading.RLock()
         self._source: Any = None
+        self._failure: str | None = None
+        self._failed_at = 0.0
+
+    def reset(self) -> None:
+        """Forget the source and any cached failure; the next call builds a fresh source."""
+        with self._lock:
+            self._source, self._failure, self._failed_at = None, None, 0.0
 
     def _get_source(self) -> Any:
         with self._lock:
-            if self._source is None:
+            if self._source is not None:
+                return self._source
+            if self._failure is not None and self._clock() - self._failed_at < self._retry:
+                raise RuntimeError(self._failure)
+            try:
                 self._source = self._make()  # RuntimeError when live was asked for and is unusable
+            except Exception as exc:  # health: allow BLE001 -- cache the failure, then let the caller report it
+                self._failure, self._failed_at = f"{type(exc).__name__}: {exc}", self._clock()
+                raise
+            self._failure = None
             return self._source
+
+    def _simulated(self) -> bool:
+        """True unless the answering source is the live board. Same value on every path: the built source's mode,
+        or, if it cannot be built, the configured mode."""
+        try:
+            return getattr(self._get_source(), "mode", "") != "live"
+        except Exception:  # health: allow BLE001 -- a failed source falls back to the configured mode
+            return _configured_simulated()
 
     def available(self) -> bool:
         """check_fn: hide the tools when the configured source cannot be built."""
@@ -97,10 +136,12 @@ class FoundryTools:
             with self._lock:
                 source = self._get_source()
                 result = dict(run_command(source, body))
-                result["simulated"] = getattr(source, "mode", "") != "live"
         except Exception as exc:  # health: allow BLE001 -- a tool reports, it never raises into the agent loop
-            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "simulated": False}
-        return json.dumps(result, sort_keys=True)
+            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return self._out(result)
+
+    def _out(self, result: dict[str, Any]) -> str:
+        return json.dumps({**result, "simulated": self._simulated()}, sort_keys=True)
 
     # -- handlers (Hermes calls handler(args)) --------------------------------
     def assign(self, args: Any, **_: Any) -> str:
@@ -129,9 +170,23 @@ class FoundryTools:
             return self._bad(f"text is over {TEXT_MAX} characters")
         return self.call({"type": "message", "worker_id": worker_id.strip(), "text": text})
 
-    @staticmethod
-    def _bad(error: str) -> str:
-        return json.dumps({"ok": False, "error": error, "simulated": False}, sort_keys=True)
+    def _bad(self, error: str) -> str:
+        return self._out({"ok": False, "error": error})
+
+
+_default: FoundryTools | None = None
+
+
+def default_tools() -> FoundryTools:
+    global _default
+    if _default is None:
+        _default = FoundryTools()
+    return _default
+
+
+def reset() -> None:
+    """Forget the default tools' source and any cached failure (tests, and an operator fixing the cause)."""
+    default_tools().reset()
 
 
 def register_tools(ctx: Any, tools: FoundryTools | None = None) -> list[str]:
@@ -139,7 +194,7 @@ def register_tools(ctx: Any, tools: FoundryTools | None = None) -> list[str]:
 
     ``register_tool`` returns None when the name clashes with another toolset; that tool is skipped and logged.
     """
-    tools = tools or FoundryTools()
+    tools = tools or default_tools()
     specs = (
         ("foundry_assign", ASSIGN_DESCRIPTION, ASSIGN_PARAMETERS, tools.assign, "\U0001f9ed"),
         ("foundry_stand", STAND_DESCRIPTION, STAND_PARAMETERS, tools.stand, "⏸"),
