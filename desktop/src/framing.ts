@@ -60,6 +60,7 @@ export function ndcLimits(w: number, h: number): NdcLimits {
 }
 
 const scratch = new THREE.Vector3()
+const scratch2 = new THREE.Vector3()
 
 /** True when every point projects inside the limits. The camera must already have its matrices updated. */
 export function fits(camera: THREE.PerspectiveCamera, points: THREE.Vector3[], lim: NdcLimits): boolean {
@@ -105,31 +106,69 @@ export function fitCamera(camera: THREE.PerspectiveCamera, target: THREE.Vector3
     camera.lookAt(target)
     camera.updateMatrixWorld(true)
   }
-  const solve = () => {
-    let lo = range[0], hi = range[1]
-    place(hi)
-    while (!fits(camera, points, lim) && hi < MAX_DISTANCE) { lo = hi; hi *= 2; place(hi) }
-    for (let i = 0; i < 28; i++) {
-      const mid = (lo + hi) / 2
-      place(mid)
-      if (fits(camera, points, lim)) hi = mid; else lo = mid
-    }
-    place(hi)
-    return hi
-  }
-  let d = solve()
   const right = new THREE.Vector3(d0.z, 0, -d0.x).normalize() // horizontal, to the camera's right
   const fwd = new THREE.Vector3(-d0.x, 0, -d0.z).normalize() // along the ground, away from the camera
   const sinEl = d0.y
   const halfV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
-  for (let i = 0; i < 16; i++) {
-    const b = ndcBounds(camera, points)
-    const cx = (b.minX + b.maxX) / 2
-    const cy = (b.minY + b.maxY) / 2 - (lim.yTop - lim.yBottom) / 2 // where the content is minus where it should be
-    if (Math.abs(cx) < 0.01 && Math.abs(cy) < 0.01) break
-    target.addScaledVector(right, 0.8 * cx * d * halfV * camera.aspect)
-    target.addScaledVector(fwd, (0.8 * cy * d * halfV) / sinEl)
-    d = solve()
+  /**
+   * Place the camera at `dist` with the target slid across the ground until the points' screen centre sits at the middle of
+   * the free rectangle. The free rectangle can lie well off the screen centre (a short pane under its header), and with the
+   * target fixed the content only shrinks toward the screen centre as the camera backs off, so a plain distance search
+   * could never reach it. Centring at every trial distance makes "does it fit at this distance" a fair question.
+   */
+  const origin = target.clone()
+  const settle = (dist: number) => {
+    let gain = 0.8, prev = Infinity
+    const keep = scratch2
+    target.copy(origin) // every trial starts from the same place, so "fits at this distance" has one answer
+    for (let i = 0; i < 40; i++) {
+      place(dist)
+      const b = ndcBounds(camera, points)
+      const cx = (b.minX + b.maxX) / 2
+      const cy = (b.minY + b.maxY) / 2 - (lim.yTop - lim.yBottom) / 2 // where the content is minus where it should be
+      if (!Number.isFinite(cx + cy)) break
+      const err = Math.abs(cx) + Math.abs(cy)
+      if (err < 0.005) return
+      if (err > prev) { // that step overshot (perspective is not linear near the pane's edge): undo it and take a smaller one
+        target.copy(keep); gain *= 0.5
+        if (gain < 1e-3) break
+        place(dist)
+        const b2 = ndcBounds(camera, points)
+        const cx2 = (b2.minX + b2.maxX) / 2, cy2 = (b2.minY + b2.maxY) / 2 - (lim.yTop - lim.yBottom) / 2
+        keep.copy(target)
+        target.addScaledVector(right, gain * cx2 * dist * halfV * camera.aspect)
+        target.addScaledVector(fwd, (gain * cy2 * dist * halfV) / sinEl)
+        prev = Math.abs(cx2) + Math.abs(cy2)
+        continue
+      }
+      prev = err
+      keep.copy(target)
+      target.addScaledVector(right, gain * cx * dist * halfV * camera.aspect)
+      target.addScaledVector(fwd, (gain * cy * dist * halfV) / sinEl)
+    }
+    place(dist)
+  }
+  const solve = () => {
+    let lo = range[0], hi = range[1]
+    settle(hi)
+    while (!fits(camera, points, lim) && hi < MAX_DISTANCE) { lo = hi; hi *= 2; settle(hi) }
+    for (let i = 0; i < 28; i++) {
+      const mid = (lo + hi) / 2
+      settle(mid)
+      if (fits(camera, points, lim)) hi = mid; else lo = mid
+    }
+    settle(hi)
+    return hi
+  }
+  // Start with every point in front of the camera wherever the search lands: a view that holds the whole valley.
+  let radius = 0
+  for (const q of points) radius = Math.max(radius, Math.hypot(q.x - target.x, q.y - target.y, q.z - target.z))
+  const refDist = Math.max(range[1], radius * 3)
+  let d = solve()
+  if (!fits(camera, points, lim)) {
+    // no verified fit (degenerate input): a sane view of the centred valley, never a huge distance
+    d = Math.min(d, refDist)
+    settle(d)
   }
   return d
 }

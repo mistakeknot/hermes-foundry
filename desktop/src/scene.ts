@@ -217,7 +217,19 @@ export class FoundryScene {
     this.updateBeacons(snap)
     this.updateClimbers(snap)
     if (this.selectedCard) this.select(this.selectedCard)
-    this.frameValley(false)
+    // Creatures added, removed, rebuilt or moved change what the frame must hold. Reframe for that while the user has
+    // not taken the camera; once they have, the view stays theirs.
+    const sig = this.layoutSignature()
+    if (sig !== this.frameSig && !this.userMoved) this.frameValley(true)
+    else this.frameValley(false)
+  }
+
+  /** What the framing depends on: which creatures exist, their shape key and where they stand. */
+  private frameSig = ''
+  private layoutSignature(): string {
+    let s = ''
+    for (const [id, v] of this.creatures) s += `${id}|${v.key}|${v.center.x.toFixed(2)},${v.center.z.toFixed(2)};`
+    return s
   }
 
   /**
@@ -234,6 +246,7 @@ export class FoundryScene {
     if (this.framed && !force) return
     if (this.creatures.size === 0 || this.viewW < 2) return
     this.framed = true
+    this.frameSig = this.layoutSignature()
     const pts: THREE.Vector3[] = []
     for (const v of this.creatures.values()) pts.push(...creaturePoints(v.center, v.spec))
     const box = new THREE.Box3().setFromPoints(pts)
@@ -695,7 +708,7 @@ export class FoundryScene {
 
   // ---------------- loop ----------------
   resize(w: number, h: number) {
-    if (w < 2 || h < 2) return
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w < 2 || h < 2) return // a bad size must not reach the renderer or camera
     this.renderer.setSize(w, h, false)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()

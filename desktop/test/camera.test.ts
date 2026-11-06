@@ -344,3 +344,74 @@ describe('hover work queued before the pointer leaves cannot run after it', () =
     expect(scene.hoverProject).toBe(project)
   })
 })
+
+describe('framing survives short panes, changing layouts and bad sizes', () => {
+  const within = (scene: any, w: number, h: number) => {
+    const lim = ndcLimits(w, h), b = extents(scene), eps = 1e-3
+    expect(b.maxX).toBeLessThanOrEqual(lim.x + eps)
+    expect(b.minX).toBeGreaterThanOrEqual(-lim.x - eps)
+    expect(b.maxY).toBeLessThanOrEqual(lim.yTop + eps)
+    expect(b.minY).toBeGreaterThanOrEqual(-lim.yBottom - eps)
+    return b
+  }
+  const dist = (scene: any) => scene.camera.position.distanceTo(scene.controls.target)
+
+  for (const h of [60, 70]) it(`8 creatures in an 800x${h} pane: projected into the free band, at a sane distance`, () => {
+    const scene = mk(800, h); scene.update(snapshotWith(8)); scene.resize(800, h)
+    const b = within(scene, 800, h)
+    const lim = ndcLimits(800, h)
+    expect(lim.usable).toBe(true)
+    // really inside the band under the header, not merely "not NaN"
+    expect(b.maxY).toBeLessThanOrEqual(lim.yTop + 1e-3)
+    expect(b.minY).toBeGreaterThanOrEqual(-lim.yBottom - 1e-3)
+    expect(dist(scene)).toBeLessThan(2e4)
+    expect(dist(scene)).toBeLessThan(scene.camera.far)
+  })
+
+  it('adding and removing creatures without a resize reframes; a user-moved camera is left alone', () => {
+    const scene = mk(800, 600)
+    scene.update(snapshotWith(1)); scene.resize(800, 600)
+    within(scene, 800, 600)
+    const d1 = dist(scene)
+    scene.update(snapshotWith(30)) // no resize
+    within(scene, 800, 600)
+    const d30 = dist(scene)
+    expect(d30).toBeGreaterThan(d1)
+    scene.update(snapshotWith(2))
+    within(scene, 800, 600)
+    expect(dist(scene)).toBeLessThan(d30)
+    // the creatures that remain still fill most of the free width or height, so the distance is not left over from before
+    const lim = ndcLimits(800, 600), b = extents(scene)
+    expect(Math.max((b.maxX - b.minX) / (2 * lim.x), (b.maxY - b.minY) / (lim.yTop + lim.yBottom))).toBeGreaterThan(0.6)
+
+    // once the user has the camera, a layout change does not move it
+    scene.userMoved = true
+    const before = scene.camera.position.clone(), tgt = scene.controls.target.clone()
+    scene.update(snapshotWith(12))
+    expect(scene.camera.position.distanceTo(before)).toBe(0)
+    expect(scene.controls.target.distanceTo(tgt)).toBe(0)
+  })
+
+  it('an unchanged snapshot does not reframe', () => {
+    const scene = mk(800, 600)
+    scene.update(snapshotWith(4)); scene.resize(800, 600)
+    const spy = vi.spyOn(scene, 'frameValley')
+    scene.update(snapshotWith(4))
+    expect(spy).not.toHaveBeenCalledWith(true)
+  })
+
+  it('a nonfinite or non-positive size is ignored: the previous valid view survives', () => {
+    const scene = mk(800, 600)
+    scene.update(snapshotWith(3)); scene.resize(800, 600)
+    const pos = scene.camera.position.clone(), aspect = scene.camera.aspect
+    for (const [w, h] of [[NaN, 600], [800, NaN], [Infinity, 600], [800, Infinity], [-Infinity, 600], [0, 0], [-5, 600], [1, 600]] as [number, number][]) {
+      scene.resize(w, h)
+      expect(scene.camera.aspect).toBe(aspect)
+      expect(scene.camera.position.distanceTo(pos)).toBe(0)
+      for (const c of [scene.camera.position.x, scene.camera.position.y, scene.camera.position.z, scene.camera.aspect]) expect(Number.isFinite(c)).toBe(true)
+    }
+    scene.resize(500, 700) // and a good size afterwards still works
+    expect(scene.camera.aspect).toBeCloseTo(500 / 700)
+    within(scene, 500, 700)
+  })
+})
