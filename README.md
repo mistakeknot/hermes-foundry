@@ -23,6 +23,10 @@ It never claims the card and never infers a profile from the worker; you still p
 which sends `assign` only. A drop on anything else (empty space, a carving, a creature body, another climber) does
 nothing, and leaving the canvas mid-drag cancels it. Fixture and live behave the same.
 
+A climber whose worker reports `looping` visibly slips down its scale and catches a new hold, on a loop. This is motion
+only: it needs no command and infers nothing from re-runs. Live Hermes never reports `looping` (the kanban has no loop
+state), so the slip appears only in the fixture, which is badged simulated.
+
 ### Enabling the pane (desktop half is opt-in)
 
 `hermes plugins enable foundry` turns on the agent half (the router). The desktop half is opt-in:

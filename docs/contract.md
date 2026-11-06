@@ -85,3 +85,5 @@ The pane talks only to `FoundryApi { snapshot(); subscribe(cb); command(c); tran
 ## Fixture
 
 Proposed: 3 projects (boards), about 40 cards, 4 workers, one loop (a worker `looping`), one card blocked on a human. A deterministic state machine: each fixture command has a scripted response and `reset` restores the start (new epoch). It runs with no model calls or credentials. The pane shows a "simulated" badge in fixture mode and on any simulated action.
+
+The slip: a climber whose worker reports `looping` struggles on its hold, slips down the scale and catches a new hold, on a loop (read-only motion, no command, no event). It is drawn from the reported state alone. The live source never reports `looping` (the kanban records no loop state), so a live climber never slips; the slip is shown only in the fixture, where the pane is badged simulated.

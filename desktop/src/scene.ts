@@ -5,6 +5,7 @@ import { buildCreature, frameAt, layoutCreatures, type CreatureSpec, type LimbSp
 import { hashString, rng } from './rng'
 import { claimedWithoutClimber } from './reducer'
 import { dropOutcome, isDrag, type AssignRequest } from './drag'
+import { slipPose } from './slip'
 import type { Card, Project, Snapshot, Worker } from './types'
 
 export const STATUS_COLOR: Record<Card['status'], number> = {
@@ -436,12 +437,13 @@ export class FoundryScene {
       const step = Math.min(d.length(), speed * dt)
       if (d.length() > 1e-3) c.pos.add(d.normalize().multiplyScalar(step))
       const moving = c.pos.distanceTo(goal) > 0.05
-      let y = 0, ox = 0, oz = 0
+      let y = 0, ox = 0, oz = 0, roll = 0
       if (moving) y = Math.abs(Math.sin(t * 9 + c.phase)) * 0.25 // scrambling
       else if (w.state === 'working') { y = Math.abs(Math.sin(t * 4 + c.phase)) * 0.08; ox = Math.sin(t * 3 + c.phase) * 0.05 }
-      else if (w.state === 'looping' && c.cardId) { ox = Math.cos(t * 2.4 + c.phase) * 0.7; oz = Math.sin(t * 2.4 + c.phase) * 0.7 }
+      else if (w.state === 'looping' && c.cardId) { const s = slipPose(t, c.phase); ox = s.ox; oz = s.oz; y = s.oy; roll = s.roll }
       else if (w.state === 'waiting_human') { y = 0 }
-      c.mesh.position.set(c.pos.x + ox, c.pos.y + y + 0.25, c.pos.z + oz)
+      c.mesh.position.set(c.pos.x + ox, Math.max(c.pos.y + y + 0.25, 0.1), c.pos.z + oz)
+      c.mesh.rotation.z = roll
       c.ring.scale.setScalar(1 + 0.25 * Math.sin(t * 3 + c.phase))
       c.mesh.scale.setScalar(w.state === 'idle' ? 0.8 : 1)
     }
