@@ -22,6 +22,8 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
 - **Hermes on Python 3.14.** The harness runs Hermes from `HERMES_SRC` (the root README says where to get it and which
   commit was rehearsed). Hermes' core dependencies are declared for Python 3.14 only; on an older Python every `hermes`
   command fails with `ModuleNotFoundError: No module named 'ruamel'`. Point `HERMES_PY` at that checkout's 3.14 virtualenv.
+- **Your Hermes home is never used.** Every subcommand creates its own scratch `HERMES_HOME` under the run directory and sets it for each
+  Hermes process it starts; the test suite likewise sets `HERMES_HOME` to a temp directory (`tests/test_live.py`).
 - **A prebuilt Webapp renderer.** Run `hermes webapp --build-only` once. The harness starts the Webapp with `--skip-build`,
   so without `apps/desktop/dist-webapp` in the checkout `install` stops with "--skip-build was passed but no Webapp renderer
   exists". The build **writes into the Hermes checkout** (that directory only); the harness itself writes nothing there.
