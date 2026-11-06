@@ -8,6 +8,7 @@ import { HttpApi, probeRouter, type Rest } from './http'
 import { MockApi, PROFILES } from './mock'
 import { startSync, type SyncHandle } from './sync'
 import { findCard } from './reducer'
+import { knownStatus } from './status-look'
 import { dropUi, type AssignRequest } from './drag'
 import type { Card, Command, FoundryApi, PaneState, TranscriptReply, Worker } from './types'
 
@@ -127,7 +128,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
 
   const counts = useMemo(() => {
     const n: Record<string, number> = { open: 0, running: 0, blocked: 0, review: 0, done: 0, unknown: 0 }
-    snap?.projects.forEach((p) => p.cards.forEach((c) => { n[c.status]++ }))
+    snap?.projects.forEach((p) => p.cards.forEach((c) => { n[knownStatus(c.status)]++ }))
     return n
   }, [snap])
 
@@ -234,7 +235,7 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null }) 
     h('div', { style: { font: `600 15px ${sans}`, lineHeight: 1.25 } }, card.title),
     h('div', { style: { color: C.muted, fontFamily: mono, fontSize: 11, marginTop: 2 } }, card.id),
     h('div', { style: { marginTop: 8, display: 'flex', gap: 6, alignItems: 'center' } },
-      h('span', { style: chip(hex(STATUS_COLOR[card.status])) }, card.status === 'unknown' ? `unknown · ${card.status_native}` : card.status_native),
+      h('span', { style: chip(hex(STATUS_COLOR[knownStatus(card.status)])) }, knownStatus(card.status) === 'unknown' ? `unknown · ${card.status_native}` : card.status_native),
       card.blocked_on === 'human' ? h('span', { id: 'foundry-blocked-human', style: chip('#6fd3ff') }, 'waiting on you') : null),
     h('div', { style: { color: C.muted, marginTop: 8 } }, 'Profile: ', h('span', { style: { color: C.fg } }, card.assignee_profile ?? 'unassigned')),
     h('div', { style: { color: C.muted } }, 'Held by: ', h('span', { style: { color: C.fg } }, p.holderName ?? (card.claimed_by ? `${card.claimed_by} (unknown worker)` : 'nobody'))),

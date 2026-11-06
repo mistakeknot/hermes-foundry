@@ -6,7 +6,7 @@ import { hashString, rng } from './rng'
 import { claimedWithoutClimber } from './reducer'
 import { dropOutcome, isDrag, type AssignRequest } from './drag'
 import { slipPose } from './slip'
-import { pulse, SCALE_K, STATUS_LOOK } from './status-look'
+import { knownStatus, pulse, SCALE_K, STATUS_LOOK } from './status-look'
 import type { Card, Project, Snapshot, Worker } from './types'
 
 export const STATUS_COLOR: Record<Card['status'], number> = {
@@ -408,7 +408,7 @@ export class FoundryScene {
     const aStone = v.scales.geometry.getAttribute('aStone') as THREE.BufferAttribute
     v.scaleIds.forEach((id, i) => {
       const c = byId.get(id)
-      const st = c?.status ?? 'unknown'
+      const st = knownStatus(c?.status)
       const look = STATUS_LOOK[st]
       const pose = v.scalePose[i]
       col.setHex(STATUS_COLOR[st])

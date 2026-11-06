@@ -17,9 +17,9 @@ vi.mock('three', async (orig) => {
 })
 
 import { FoundryScene, STATUS_COLOR } from '../src/scene'
-import { STATUS_LOOK, pulse } from '../src/status-look'
+import { STATUS_LOOK, knownStatus, pulse } from '../src/status-look'
 import { buildFixture } from '../src/mock'
-import { applySnapshot } from '../src/reducer'
+import { applyEvent, applySnapshot } from '../src/reducer'
 import type { Card } from '../src/types'
 
 const STATUSES: Card['status'][] = ['open', 'running', 'blocked', 'review', 'done', 'unknown']
@@ -89,5 +89,43 @@ describe('scene applies the look per card status (same path for fixture and live
     }
     expect(seen.has('blocked')).toBe(true)
     expect(seen.has('done')).toBe(true)
+  })
+})
+
+describe('an unrecognised status never crashes the scene', () => {
+  it('knownStatus maps anything outside the six to unknown', () => {
+    for (const k of STATUSES) expect(knownStatus(k)).toBe(k)
+    for (const bad of ['future-status', '', 'RUNNING', undefined, null, 7, {}]) expect(knownStatus(bad)).toBe('unknown')
+  })
+  const lookOf = (scene: any, snap: any, id: string) => {
+    for (const proj of snap.projects) {
+      const v = scene.creatures.get(proj.id), i = v?.scaleIds.indexOf(id)
+      if (v && i >= 0) {
+        const c = new THREE.Color(); v.scales.getColorAt(i, c)
+        return { hex: c.getHex(), glow: v.scales.geometry.getAttribute('aGlow').getX(i), stone: v.scales.geometry.getAttribute('aStone').getX(i) }
+      }
+    }
+    throw new Error('no scale for ' + id)
+  }
+  it('snapshot: a card with a future status renders as unknown', () => {
+    const st = applySnapshot(buildFixture())
+    const card = st.snap.projects[0].cards[0]
+    ;(card as any).status = 'future-status'
+    const scene = mk()
+    expect(() => scene.update(st.snap)).not.toThrow()
+    const l = lookOf(scene, st.snap, card.id)
+    expect(l.hex).toBe(new THREE.Color(STATUS_COLOR.unknown).getHex())
+    expect(l.glow).toBeCloseTo(STATUS_LOOK.unknown.glow, 5)
+    expect(l.stone).toBeCloseTo(STATUS_LOOK.unknown.stone, 5)
+  })
+  it('card_upsert: a live update to a future status renders as unknown and does not throw', () => {
+    const st = applySnapshot(buildFixture())
+    const scene = mk()
+    scene.update(st.snap)
+    const card = structuredClone(st.snap.projects[0].cards[0]) as any
+    card.status = 'future-status'
+    const next = applyEvent(st, { seq: st.watermark + 1, ts: '2026-11-07T00:00:00Z', type: 'card_upsert', payload: { card } } as any)!
+    expect(() => scene.update(next.snap)).not.toThrow()
+    expect(lookOf(scene, next.snap, card.id).hex).toBe(new THREE.Color(STATUS_COLOR.unknown).getHex())
   })
 })

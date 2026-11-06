@@ -3,6 +3,13 @@
 // status readable at a glance from the default camera: size (width `w`, height `h`) and light (`glow`, `stone`).
 import type { Card } from './types'
 
+const KNOWN: ReadonlySet<string> = new Set(['open', 'running', 'blocked', 'review', 'done', 'unknown'])
+
+/** A status the pane does not recognise (a newer source, a bad payload) is treated as 'unknown', never looked up raw. */
+export function knownStatus(s: unknown): Card['status'] {
+  return typeof s === 'string' && KNOWN.has(s) ? (s as Card['status']) : 'unknown'
+}
+
 export interface StatusLook {
   /** width multiplier of the hex (across the limb) */
   w: number
