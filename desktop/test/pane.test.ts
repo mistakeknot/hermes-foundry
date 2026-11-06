@@ -344,6 +344,36 @@ describe('operating a card: one click picks a status or a profile', () => {
     expect(posts).toEqual([{ path: '/command', body: { type: 'assign', card_id: card.id, profile: 'coder' } }])
   })
 
+  it('on a live board with profiles in use, a new profile name can still be typed and assigned (assign only)', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    const posts: { path: string; body: unknown }[] = []
+    const scene = await mount(liveRest(snap, posts))
+    await waitFor(() => !document.getElementById('foundry-simulated') && !!document.querySelector('canvas'), 'the live pane')
+    await tick(60)
+    const card = await openCard(scene, snap)
+    expect(profileButtons().length).toBeGreaterThan(0) // buttons for the profiles already in use...
+    const input = document.getElementById('foundry-profile-new') as HTMLInputElement // ...and the field beside them
+    expect(input.tagName).toBe('INPUT')
+    expect((document.getElementById('foundry-assign') as HTMLButtonElement).disabled).toBe(true)
+    expect(posts).toEqual([])
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => { setter.call(input, 'brand-new-profile'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+    await click('foundry-assign')
+    expect(posts).toEqual([{ path: '/command', body: { type: 'assign', card_id: card.id, profile: 'brand-new-profile' } }])
+    expect(notice()).toContain('Foundry does not claim or start the card')
+  })
+
+  it('the fixture offers the profile buttons only, no free-text field', async () => {
+    const scene = await mount(() => Promise.reject(new Error('no router')))
+    await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+    const fx = await new MockApi(Date.now, 3_600_000).snapshot()
+    const card = fx.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
+    await dragOnto(scene, fx.workers[0].id, card.id)
+    await waitFor(() => !!document.getElementById('foundry-profile'), 'the card panel')
+    expect(document.getElementById('foundry-profile-new')).toBeNull()
+    expect(document.getElementById('foundry-assign')).toBeNull()
+  })
+
   /** a live router whose command answers are held until released, and whose event stream shows the change only once `applied` */
   function heldRest(snap: Snapshot, posts: any[], applyTo: (c: any, body: any) => any) {
     let release!: (r: { ok: boolean; error?: string }) => void

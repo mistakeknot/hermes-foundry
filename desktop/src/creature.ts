@@ -38,6 +38,9 @@ const len = (a: V3) => Math.hypot(a[0], a[1], a[2])
 const norm = (a: V3): V3 => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l] }
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 const GOLDEN = 2.399963229728653
+/** Cards one limb carries before the epic's cards are spread over more limbs, and the most limbs one epic is spread over. */
+export const LIMB_MAX = 12
+export const MAX_SPLIT = 6
 const MATERIALS: Material[] = ['stone', 'lichen', 'coral']
 
 function round(v: number) { return Math.round(v * 1e5) / 1e5 }
@@ -92,12 +95,19 @@ export function buildCreature(project: Project): CreatureSpec {
   }
   if (!byEpic.get(null)?.length) byEpic.delete(null) // a stray limb only when there are stray cards
 
-  const keys = [...byEpic.keys()]
-  const nLimb = keys.length
-  const limbs: LimbSpec[] = keys.map((epicId, li) => {
-    const lr = rng(hashString(`${project.id}/${epicId ?? '_'}`))
-    const list = byEpic.get(epicId)!
-    const title = project.epics.find((e) => e.id === epicId)?.title ?? 'Unsorted'
+  // An epic with many cards is spread over several limbs (see LIMB_MAX), so one big board does not become a single long,
+  // heaped limb. The split follows the id order, so a status change still moves nothing.
+  const parts: { epicId: string | null; list: Card[]; part: number; of: number }[] = []
+  for (const [epicId, all] of byEpic) {
+    const of = Math.min(MAX_SPLIT, Math.max(1, Math.ceil(all.length / LIMB_MAX)))
+    const per = Math.ceil(all.length / of)
+    for (let k = 0; k < of; k++) parts.push({ epicId, list: all.slice(k * per, (k + 1) * per), part: k, of })
+  }
+  const nLimb = parts.length
+  const limbs: LimbSpec[] = parts.map(({ epicId, list, part, of }, li) => {
+    const lr = rng(hashString(part === 0 ? `${project.id}/${epicId ?? '_'}` : `${project.id}/${epicId ?? '_'}/${part}`))
+    const name = project.epics.find((e) => e.id === epicId)?.title ?? 'Unsorted'
+    const title = of > 1 ? `${name} (${part + 1}/${of})` : name
     const theta = (li / nLimb) * Math.PI * 2 + (lr() - 0.5) * 0.35
     const base: V3 = [Math.cos(theta) * torsoR[0] * 0.85, (lr() - 0.5) * torsoR[1] * 0.6, Math.sin(theta) * torsoR[2] * 0.85]
     const length = Math.min(3 + 0.55 * Math.sqrt(list.length) * 2.2, 9)

@@ -41,6 +41,17 @@ const field: Record<string, unknown> = { font: `12px ${sans}`, padding: '5px 8px
 const chip = (color: string): Record<string, unknown> => ({ display: 'inline-block', padding: '1px 8px', borderRadius: 10, background: color, color: '#16160f', font: `600 11px ${sans}` })
 const sect = (t: string) => h('div', { style: { font: `600 10px ${sans}`, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.muted, margin: '14px 0 6px' } }, t)
 
+/**
+ * Side panel width for a pane `paneW` px wide. The panel is a third of a narrow pane (never under 220) and 330 once the pane is
+ * wide, so the 3D view keeps most of a small pane. 0 means "not measured yet" (first render, jsdom): treat it as wide.
+ */
+export function panelWidthFor(paneW: number): number {
+  if (!(paneW > 0)) return 330
+  return Math.min(330, Math.max(220, Math.round(paneW * 0.38)))
+}
+/** Under this pane width the header and hint switch to their short forms. */
+export const NARROW_PX = 700
+
 /** `?foundryScale=N` multiplies the fixture's card count, to exercise the crowded-valley view. */
 function fixtureScale(): number {
   const n = Number(new URLSearchParams(globalThis.location?.search ?? '').get('foundryScale'))
@@ -67,6 +78,19 @@ function FoundryPage({ rest }: { rest: Rest }) {
   // set by dropping a climber on a scale: opens that card's profile selector. Carries no profile and no command.
   const [assignReq, setAssignReq] = useState<AssignRequest | null>(null)
   const snapRef = useRef<PaneState['snap'] | null>(null)
+  // the pane's own width (not the window's: Hermes Desktop's chrome takes a share of it) sizes the side panel
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [paneW, setPaneW] = useState(0)
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    const measure = () => setPaneW(el.clientWidth)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const narrow = paneW > 0 && paneW < NARROW_PX
 
   // pick the source once: our router if it answers, otherwise the in-pane fixture
   useEffect(() => { let off = false; pickApi(rest).then((a) => { if (!off) setApi(a) }); return () => { off = true } }, [])
@@ -116,7 +140,10 @@ function FoundryPage({ rest }: { rest: Rest }) {
   useEffect(() => {
     const s = sceneRef.current
     if (!s) return
-    s.select(pick?.kind === 'card' ? pick.id : pick?.kind === 'doc' ? pick.cardId : null)
+    const id = pick?.kind === 'card' ? pick.id : pick?.kind === 'doc' ? pick.cardId : null
+    const c = id && snap ? findCard(snap, id) : undefined
+    // the label pinned over the scale names it, so the marked scale can be told from its neighbours
+    s.select(id, c ? `${c.title} · ${c.status_native}` : undefined)
   }, [pick, snap])
 
   const simulated = !!api?.simulated || snap?.mode === 'fixture'
@@ -170,12 +197,12 @@ function FoundryPage({ rest }: { rest: Rest }) {
     return n
   }, [snap])
 
-  const header = h('div', { style: { position: 'absolute', top: 10, left: 12, right: 12, display: 'flex', gap: 10, alignItems: 'center', pointerEvents: 'none', flexWrap: 'wrap' } },
+  const header = h('div', { style: { position: 'absolute', top: 10, left: 12, right: 12, display: 'flex', gap: narrow ? 6 : 10, alignItems: 'center', pointerEvents: 'none', flexWrap: 'wrap' } },
     h('div', { style: { font: `600 14px ${sans}`, color: ON_DARK, textShadow: '0 1px 3px #000' } }, 'Foundry'),
     simulated ? h('span', { id: 'foundry-simulated', style: { ...chip('#e6a93c'), pointerEvents: 'auto' }, title: 'Showing fixture data; actions do not reach a live Hermes board' }, 'simulated') : null,
     snap?.paused ? h('span', { style: chip('#6fd3ff') }, 'standing') : null,
     link === 'error' ? h('span', { style: chip(hex(STATUS_COLOR.blocked)) }, 'reconnecting') : null,
-    h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 10, font: `11px ${sans}`, color: ON_DARK_MUTED, textShadow: '0 1px 3px #000' } },
+    h('div', { style: { marginLeft: 'auto', display: 'flex', gap: narrow ? 7 : 10, font: `${narrow ? 10 : 11}px ${sans}`, color: ON_DARK_MUTED, textShadow: '0 1px 3px #000' } },
       (['open', 'running', 'blocked', 'review', 'done'] as const).map((k) => h('span', { key: k, style: { display: 'inline-flex', gap: 4, alignItems: 'center' } },
         h('i', { style: { width: 9, height: 9, borderRadius: 2, background: hex(STATUS_COLOR[k]), display: 'inline-block' } }), `${k} ${counts[k]}`)),
       counts.unknown ? h('span', { style: { display: 'inline-flex', gap: 4, alignItems: 'center' } }, h('i', { style: { width: 9, height: 9, borderRadius: 2, background: hex(STATUS_COLOR.unknown), display: 'inline-block' } }), `other ${counts.unknown}`) : null))
@@ -186,15 +213,15 @@ function FoundryPage({ rest }: { rest: Rest }) {
     h('div', { id: 'foundry-vignette', style: { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'radial-gradient(ellipse at 50% 55%, rgba(8,12,11,0) 52%, rgba(8,12,11,0.55) 80%, rgba(8,12,11,0.9) 100%)' } }),
     h('div', { ref: labelsRef, style: { position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' } }),
     header,
-    tip ? h('div', { style: { position: 'absolute', left: tip.x, top: tip.y, background: C.card, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '3px 8px', font: `11px ${sans}`, pointerEvents: 'none', maxWidth: 280 } }, tip.label) : null,
+    tip ? h('div', { style: { position: 'absolute', left: tip.x, top: tip.y, background: C.card, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '3px 8px', font: `11px ${sans}`, pointerEvents: 'none', maxWidth: 280, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, tip.label) : null,
     !webgl ? h('div', { style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: ON_DARK_MUTED, font: `13px ${sans}` } }, 'WebGL is not available in this window.') : null,
     !snap && webgl ? h('div', { style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: ON_DARK_MUTED, font: `13px ${sans}`, pointerEvents: 'none' } }, 'Waking the valley…') : null,
-    h('div', { style: { position: 'absolute', left: 12, bottom: 10, font: `11px ${sans}`, color: ON_DARK_MUTED, textShadow: '0 1px 3px #000', pointerEvents: 'none' } }, 'drag to orbit · scroll to zoom · click a scale, carving or climber · double-click a creature to approach'))
+    h('div', { style: { position: 'absolute', left: 12, right: 12, bottom: 10, font: `${narrow ? 10 : 11}px ${sans}`, color: ON_DARK_MUTED, textShadow: '0 1px 3px #000', pointerEvents: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, narrow ? 'drag orbit · scroll zoom · click to open · double-click a creature' : 'drag to orbit · scroll to zoom · click a scale, carving or climber · double-click a creature to approach'))
 
-  const panel = h('div', { id: 'foundry-panel', style: { width: 330, flex: 'none', borderLeft: `1px solid ${C.border}`, background: C.card, color: C.fg, font: `13px ${sans}`, overflowY: 'auto', padding: '12px 14px' } },
+  const panel = h('div', { id: 'foundry-panel', style: { width: panelWidthFor(paneW), flex: 'none', borderLeft: `1px solid ${C.border}`, background: C.card, color: C.fg, font: `13px ${sans}`, overflowY: 'auto', padding: narrow ? '10px 12px' : '12px 14px' } },
     snap ? Panel({ snap, state: state!, pick, setPick, run, busyIds, notice, simulated, api: api!, scene: sceneRef, assignReq, clearAssignReq: () => setAssignReq(null) }) : null)
 
-  return h('div', { style: { display: 'flex', height: '100%', width: '100%', background: C.bg } }, stage, panel)
+  return h('div', { ref: rootRef, style: { display: 'flex', height: '100%', width: '100%', background: C.bg } }, stage, panel)
 }
 
 interface PanelProps {
@@ -213,7 +240,7 @@ function PanelBody(p: PanelProps) {
   const card = pick?.kind === 'card' ? findCard(snap, pick.id) : pick?.kind === 'doc' ? findCard(snap, pick.cardId) : undefined
   const noticeEl = p.notice ? h('div', { id: 'foundry-notice', style: { marginTop: 10, padding: '6px 8px', borderRadius: 6, font: `12px ${sans}`, border: `1px solid ${p.notice.err ? C.danger : C.border}`, color: p.notice.err ? '#ffb4a8' : C.fg } },
     p.notice.text, p.notice.sim ? h('span', { style: { ...chip('#e6a93c'), marginLeft: 8 } }, 'simulated') : null) : null
-  if (pick?.kind === 'card' && card) return h('div', null, CardView({ ...p, card }), noticeEl)
+  if (pick?.kind === 'card' && card) return h('div', null, CardView({ ...p, card, noticeEl }))
   if (pick?.kind === 'doc' && card) return h('div', null, DocView({ ...p, card, doc: pick }), noticeEl)
   if (pick?.kind === 'worker') {
     const w = snap.workers.find((x) => x.id === pick.id)
@@ -242,13 +269,13 @@ function Overview(p: PanelProps) {
       h('i', { style: { width: 10, height: 10, borderRadius: 5, background: hex(WORKER_COLOR[w.state]), display: 'inline-block' } }), h('span', null, w.name), h('span', { style: { color: C.muted } }, ` ${w.state}`))))
 }
 
-function CardView(p: PanelProps & { card: Card }) {
+function CardView(p: PanelProps & { card: Card; noticeEl: unknown }) {
   const { card, snap } = p
   const holder = card.claimed_by ? snap.workers.find((w) => w.id === card.claimed_by) : null
   return h(CardActions, { ...p, key: card.id, holderName: holder?.name ?? null } as unknown as Record<string, unknown>)
 }
 
-function CardActions(p: PanelProps & { card: Card; holderName: string | null }) {
+function CardActions(p: PanelProps & { card: Card; holderName: string | null; noticeEl: unknown }) {
   const { card, snap, setPick } = p
   const [profile, setProfile] = useState('') // typed only when no profile is known yet (see the Assign section)
   const [text, setText] = useState('')
@@ -290,15 +317,23 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null }) 
     profiles.length
       ? h('div', { style: row, role: 'group', 'aria-label': 'Assign profile' },
         ...profiles.map((n, i) => choiceBtn(i === 0 ? 'foundry-profile' : `foundry-profile-${n}`, n, n === card.assignee_profile, busy, () => assign(n), i === 0 ? profileRef : undefined)))
-      // no profile is known yet (a live board with nothing assigned): the name has to be typed once
-      : h('div', { style: row },
-        h('input', { id: 'foundry-profile', ref: profileRef, style: { ...field, flex: 1 }, value: profile, placeholder: 'profile', onChange: (e: any) => setProfile(e.target.value) }),
-        h('button', { id: 'foundry-assign', style: btn(true), disabled: busy || !profile.trim(), onClick: () => assign(profile.trim()) }, 'Assign')),
-    sect('Comment'),
-    comments.length ? h('div', null, ...comments.map((c, i) => h('div', { key: i, style: { padding: '3px 0', fontSize: 12 } }, h('b', null, c.author), `: ${c.text}`))) : null,
-    h('div', { style: { ...row, flexDirection: 'column' } },
-      h('textarea', { id: 'foundry-comment', rows: 3, style: { ...field, resize: 'vertical' }, value: text, placeholder: 'Write a comment…', onChange: (e: any) => setText(e.target.value) }),
-      h('button', { id: 'foundry-comment-send', style: { ...btn(true), alignSelf: 'flex-end' }, disabled: !text.trim(), onClick: async () => { if (await p.run({ type: 'comment', card_id: card.id, text: text.trim() }, 'Comment added')) setText('') } }, 'Comment')))
+      : null,
+    // A live board only lists profiles already in use, so a new name has to be typeable even when buttons exist. The fixture's
+    // profile set is fixed (PROFILES), so it offers the buttons alone. Same assign-only command and wording either way.
+    !profiles.length || !p.simulated
+      ? h('div', { style: row },
+        h('input', { id: profiles.length ? 'foundry-profile-new' : 'foundry-profile', ref: profiles.length ? undefined : profileRef, style: { ...field, flex: 1 }, value: profile, placeholder: profiles.length ? 'another profile' : 'profile', onChange: (e: any) => setProfile(e.target.value), onKeyDown: (e: any) => { if (e.key === 'Enter' && !busy && profile.trim()) assign(profile.trim()) } }),
+        h('button', { id: 'foundry-assign', style: btn(true), disabled: busy || !profile.trim(), onClick: () => assign(profile.trim()) }, 'Assign'))
+      : null,
+    comments.length ? h('div', null, sect('Comments'), ...comments.map((c, i) => h('div', { key: i, style: { padding: '3px 0', fontSize: 12 } }, h('b', null, c.author), `: ${c.text}`))) : null,
+    // The comment box and the result line stay pinned to the bottom of the panel, so a tall card view in a short pane never
+    // pushes them below the fold. Negative margins let the pinned block cover the panel's own padding.
+    h('div', { id: 'foundry-comment-dock', style: { position: 'sticky', bottom: 0, margin: '8px -14px -12px', padding: '0 14px 10px', background: C.card, borderTop: `1px solid ${C.border}` } },
+      sect('Comment'),
+      h('div', { style: { ...row, flexDirection: 'column', marginTop: 0 } },
+        h('textarea', { id: 'foundry-comment', rows: 2, style: { ...field, resize: 'none' }, value: text, placeholder: 'Write a comment…', onChange: (e: any) => setText(e.target.value) }),
+        h('button', { id: 'foundry-comment-send', style: { ...btn(true), alignSelf: 'flex-end' }, disabled: !text.trim(), onClick: async () => { if (await p.run({ type: 'comment', card_id: card.id, text: text.trim() }, 'Comment added')) setText('') } }, 'Comment')),
+      p.noticeEl))
 }
 
 function DocView(p: PanelProps & { card: Card; doc: Extract<Pick, { kind: 'doc' }> }) {

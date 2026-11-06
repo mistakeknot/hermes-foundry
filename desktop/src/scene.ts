@@ -21,7 +21,7 @@ export const STATUS_COLOR: Record<Card['status'], number> = {
 export const WORKER_COLOR: Record<Worker['state'], number> = {
   working: 0xffd36a, waiting_human: 0x6fd3ff, looping: 0xff6fa8, idle: 0xb9b2a0, unknown: 0xa6a6a6,
 }
-const MATERIAL_COLOR: Record<Material, number> = { stone: 0xc2bcac, lichen: 0xa6c74c, coral: 0xf0714f }
+export const MATERIAL_COLOR: Record<Material, number> = { stone: 0xc2bcac, lichen: 0xa6c74c, coral: 0xa8809a } // dusty mauve: a limb must never share the blocked ember hue (0xff5436) or it reads as a blocked card
 
 export type Pick =
   | { kind: 'card'; id: string }
@@ -38,6 +38,8 @@ export interface SceneCallbacks {
 
 /** Scales are drawn only when a creature is close enough, once the valley is crowded (legibility past ~100 cards). */
 export const CROWDED = 100
+/** Height of the pin above a selected scale, in world units. */
+const SELECT_PIN = 2.4
 export function showScales(totalCards: number, dist: number, radius: number): boolean {
   return totalCards <= CROWDED || dist < 7 + radius * 1.7
 }
@@ -92,7 +94,12 @@ export class FoundryScene {
   private creatures = new Map<string, CreatureView>()
   private climbers = new Map<string, ClimberView>()
   private beacons: { mesh: THREE.Mesh; cardId: string }[] = []
-  private selection = new THREE.Mesh(new THREE.TorusGeometry(1, 0.08, 8, 24), new THREE.MeshBasicMaterial({ color: 0xffffff }))
+  // Selection marker: a ring round the scale, a pin above it and (in the DOM) a label with the card's title and status.
+  // Both meshes ignore depth so a scale behind a limb is still found.
+  private selection = new THREE.Mesh(new THREE.TorusGeometry(1, 0.1, 8, 28), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true }))
+  private selectionPin = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true }))
+  private selectionLabel: HTMLElement | null = null
+  private selectionText = ''
   private raf = 0
   private clock = new THREE.Clock()
   /** shared by every scale material: drives the pulse of a blocked glow */
@@ -100,7 +107,9 @@ export class FoundryScene {
   private snap: Snapshot | null = null
   private totalCards = 0
   private selectedCard: string | null = null
-  private focus: { from: THREE.Vector3; to: THREE.Vector3; t: number } | null = null
+  private focus: { fromT: THREE.Vector3; toT: THREE.Vector3; fromP: THREE.Vector3; toP: THREE.Vector3; t: number } | null = null
+  /** The creature the camera last approached, while the user has not orbited away: a resize re-fits it. */
+  private focusedId: string | null = null
   /** The press in flight. Only the pointer that started it can finish it; `multi` marks a second pointer joining. */
   private down: { x: number; y: number; id: number; multi: boolean } | null = null
   /** The climber being dragged, if the press started on one. Orbit is suspended while it is set. `cancelled` is final:
@@ -128,7 +137,10 @@ export class FoundryScene {
     this.buildValley()
     this.selection.visible = false
     this.selection.rotation.x = Math.PI / 2
-    this.scene.add(this.selection)
+    this.selection.renderOrder = 10
+    this.selectionPin.visible = false
+    this.selectionPin.renderOrder = 10
+    this.scene.add(this.selection, this.selectionPin)
 
     this.camera.position.set(0, 20, 30)
     // Our pointer listeners go on first. OrbitControls registers its own after, so a press that starts on a climber can
@@ -146,7 +158,7 @@ export class FoundryScene {
     this.controls.minDistance = 4
     this.controls.maxDistance = 70
     this.controls.maxPolarAngle = Math.PI * 0.47
-    this.controls.addEventListener('start', () => { this.userMoved = true }) // from here the user owns the view
+    this.controls.addEventListener('start', () => { this.userMoved = true; this.focusedId = null; this.focus = null }) // from here the user owns the view
     this.controls.target.set(0, 3, 0)
     this.loop()
   }
@@ -258,21 +270,63 @@ export class FoundryScene {
     const { pts, mid } = this.frameGeo
     this.controls.target.set(mid.x, 0, mid.z)
     this.frameDist = fitCamera(this.camera, this.controls.target, pts, this.viewW, this.viewH)
-    this.controls.maxDistance = Math.max(70, this.frameDist * 1.3)
+    this.baseMaxDistance = Math.max(70, this.frameDist * 1.3)
+    this.controls.maxDistance = this.baseMaxDistance
     // keep the fog's grip on the creatures constant when a large or tall valley pushes the camera back
     if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = Math.min(0.015, 0.55 / this.frameDist)
     this.controls.update()
   }
 
+  /**
+   * Fly to a creature: the destination is the camera distance and target that fit the creature's real extent into the free
+   * part of the pane (clear of the header and the edges), looking from the direction the user already has. Both the target
+   * and the camera move, so the creature ends up centred and uncropped at any pane size.
+   */
   focusCreature(projectId: string) {
     const v = this.creatures.get(projectId)
     if (!v) return
     this.userMoved = true
-    const to = v.center.clone().add(new THREE.Vector3(0, v.spec.height * 0.4, 0))
-    this.focus = { from: this.controls.target.clone(), to, t: 0 }
-    const dir = this.camera.position.clone().sub(this.controls.target).normalize()
-    const dist = Math.max(10, v.spec.radius * 2.3)
-    this.camera.position.copy(to.clone().add(dir.multiplyScalar(dist)))
+    this.focusedId = projectId
+    const dest = this.fitCreature(v)
+    if (!dest) return
+    this.allowReach(dest.pos.distanceTo(dest.target))
+    this.focus = { fromT: this.controls.target.clone(), toT: dest.target, fromP: this.camera.position.clone(), toP: dest.pos, t: 0 }
+  }
+
+  /**
+   * The orbit controls clamp the camera to maxDistance on every update(). A fitted creature view in a narrow pane can need
+   * a longer distance than the valley's bound, and the clamp would pull the camera in and crop the creature, so the bound
+   * is the larger of the valley's baseline and the current fit, recomputed on every focus and refit (so a pane that is
+   * widened again gives the extra back) and relaxed to the baseline once the user takes the view (relaxReach).
+   */
+  private allowReach(dist: number) {
+    this.controls.maxDistance = Math.max(this.baseMaxDistance, dist * 1.05)
+  }
+  /** The valley's own orbit limit; a focus fit may raise controls.maxDistance above it, never below. */
+  private baseMaxDistance = 70
+  /** Once the user takes the view back, bring a raised limit down to the baseline as the camera allows (never snapping it in). */
+  private relaxReach() {
+    if (this.focusedId || this.controls.maxDistance <= this.baseMaxDistance) return
+    const d = this.camera.position.distanceTo(this.controls.target)
+    this.controls.maxDistance = Math.max(this.baseMaxDistance, Math.min(this.controls.maxDistance, d))
+  }
+
+  /** Where the camera and target must be to frame one creature in the pane. The camera is left where it was. */
+  private fitCreature(v: CreatureView): { target: THREE.Vector3; pos: THREE.Vector3 } | null {
+    if (this.viewW < 2) return null
+    const keepP = this.camera.position.clone(), keepT = this.controls.target.clone()
+    const dir = keepP.clone().sub(keepT)
+    if (dir.lengthSq() < 1e-6) dir.set(0.45, 0.5, 0.85)
+    dir.normalize()
+    dir.y = Math.min(Math.max(dir.y, 0.25), 0.9) // from above the ground at a readable angle, whatever the user orbited to
+    const target = new THREE.Vector3(v.center.x, 0, v.center.z)
+    fitCamera(this.camera, target, creaturePoints(v.center, v.spec), this.viewW, this.viewH, dir, [4, 140])
+    const out = { target: target.clone(), pos: this.camera.position.clone() }
+    this.camera.position.copy(keepP)
+    this.controls.target.copy(keepT)
+    this.camera.lookAt(keepT)
+    this.camera.updateMatrixWorld(true)
+    return out
   }
 
   private makeCreature(spec: CreatureSpec, key: string, center: THREE.Vector3): CreatureView {
@@ -568,11 +622,30 @@ export class FoundryScene {
   }
 
   // ---------------- selection ----------------
-  select(cardId: string | null) {
+  /** `text` is what the pinned label says (the card's title and status); without it the label shows nothing. */
+  select(cardId: string | null, text?: string) {
+    if (text !== undefined) this.selectionText = text
+    else if (cardId !== this.selectedCard) this.selectionText = ''
     this.selectedCard = cardId
     const p = cardId ? this.cardWorldPos(cardId) : null
     this.selection.visible = !!p
-    if (p) { this.selection.position.copy(p).add(new THREE.Vector3(0, 0.15, 0)); this.selection.scale.setScalar(0.9) }
+    this.selectionPin.visible = !!p
+    if (!p) this.selectionText = ''
+    if (p) {
+      this.selection.position.copy(p).add(new THREE.Vector3(0, 0.15, 0))
+      this.selection.scale.setScalar(this.selectionRadius(cardId!))
+      this.selectionPin.scale.set(1, SELECT_PIN, 1)
+      this.selectionPin.position.copy(p).add(new THREE.Vector3(0, 0.15 + SELECT_PIN / 2, 0))
+    }
+  }
+
+  /** Ring radius: clearly wider than the scale it marks (a flat done scale and a tall blocked one alike), never tiny. */
+  private selectionRadius(cardId: string): number {
+    for (const v of this.creatures.values()) {
+      const i = v.scaleIds.indexOf(cardId)
+      if (i >= 0) return Math.max(1.0, v.scalePose[i].k * 1.5)
+    }
+    return 1.0
   }
 
   // ---------------- input ----------------
@@ -731,6 +804,19 @@ export class FoundryScene {
     this.viewW = s.w
     this.viewH = s.h
     if (!this.userMoved) this.frameValley(true)
+    else if (this.focusedId) this.refocus() // a pane that changed size must not leave the approached creature cropped
+  }
+
+  private refocus() {
+    const v = this.focusedId ? this.creatures.get(this.focusedId) : undefined
+    if (!v) return
+    const dest = this.fitCreature(v)
+    if (!dest) return
+    this.focus = null
+    this.allowReach(dest.pos.distanceTo(dest.target))
+    this.controls.target.copy(dest.target)
+    this.camera.position.copy(dest.pos)
+    this.controls.update()
   }
 
   private tmp = new THREE.Vector3()
@@ -742,9 +828,12 @@ export class FoundryScene {
     this.flushResize()
     if (this.focus) {
       this.focus.t = Math.min(1, this.focus.t + dt * 2.5)
-      this.controls.target.lerpVectors(this.focus.from, this.focus.to, this.focus.t)
+      const k = this.focus.t * this.focus.t * (3 - 2 * this.focus.t) // ease in and out
+      this.controls.target.lerpVectors(this.focus.fromT, this.focus.toT, k)
+      this.camera.position.lerpVectors(this.focus.fromP, this.focus.toP, k)
       if (this.focus.t >= 1) this.focus = null
     }
+    this.relaxReach()
     this.controls.update()
     setDepthRange(this.camera, this.camera.position.distanceTo(this.controls.target)) // follows the user's zoom too
     this.glowTime.value = t
@@ -797,6 +886,7 @@ export class FoundryScene {
       const x = (this.tmp.x * 0.5 + 0.5) * w, y = (-this.tmp.y * 0.5 + 0.5) * h
       pl.addAvoid(x - 16, y - 16, x + 16, y + 16)
     }
+    this.positionSelectionLabel(w, h)
     const fadeFrom = Math.max(45, this.frameDist * 1.2)
     pl.place(w, h, fadeFrom, fadeFrom + 35)
     let i = 0
@@ -809,6 +899,29 @@ export class FoundryScene {
       if (y !== l.sy) { l.sy = y; l.el.style.top = `${y}px` }
       if (op !== l.so) { l.so = op; l.el.style.opacity = String(op) }
     }
+  }
+
+  /** The pinned label over the selected scale: its title and status, kept inside the pane, below the header band. */
+  private positionSelectionLabel(w: number, h: number) {
+    const p = this.selectedCard ? this.cardWorldPos(this.selectedCard) : null
+    if (!p || !this.selectionText) { if (this.selectionLabel) this.selectionLabel.style.display = 'none'; return }
+    if (!this.selectionLabel) {
+      const el = document.createElement('div')
+      el.className = 'foundry-selection-label'
+      el.style.cssText = 'position:absolute;pointer-events:none;font:600 12px var(--dt-font-sans,system-ui);color:#111;background:#f4f1e6;border-radius:4px;padding:2px 7px;box-shadow:0 1px 6px #000a;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;transform:translate(-50%,-100%)'
+      this.labelHost.appendChild(el)
+      this.selectionLabel = el
+    }
+    const el = this.selectionLabel
+    if (el.textContent !== this.selectionText) el.textContent = this.selectionText
+    this.tmp.copy(p).add(new THREE.Vector3(0, 0.15 + SELECT_PIN, 0)).project(this.camera)
+    if (this.tmp.z >= 1) { el.style.display = 'none'; return }
+    const half = Math.min(120, w / 2 - 4)
+    const x = Math.min(Math.max((this.tmp.x * 0.5 + 0.5) * w, half), w - half)
+    const y = Math.min(Math.max((-this.tmp.y * 0.5 + 0.5) * h, 76), h - 4)
+    el.style.display = 'block'
+    el.style.left = `${Math.round(x)}px`
+    el.style.top = `${Math.round(y)}px`
   }
 
   /** The project whose labels are always shown: the one under the pointer, else the one holding the selected card. */
@@ -839,6 +952,7 @@ export class FoundryScene {
     // valley, selection ring and anything else still attached to the scene
     disposeTree(this.scene)
     this.scene.clear()
+    this.selectionLabel?.remove()
     this.renderer.dispose()
     this.renderer.forceContextLoss()
   }
