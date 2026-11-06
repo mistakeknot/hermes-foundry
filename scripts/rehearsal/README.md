@@ -2,16 +2,39 @@
 
 Repeatable checks of the Foundry pane on a clean, scratch Hermes home. Each subcommand creates its own home,
 starts the Hermes Webapp on a free loopback port, drives headless Chromium through `bb browser-automation`,
-and removes the home on exit. Homes are removed only by `cleanup_home.sh`, which refuses any path that is not
-a direct child of `RH_ROOT` named `foundry-rh.*`.
+and removes the home on exit.
 
-    export HERMES_SRC=/path/to/hermes-agent     # a Hermes checkout (renderer and Python path)
-    export HERMES_PY=/path/to/hermes/venv/bin/python   # optional
-    export RH_ROOT=/path/to/scratch/dir OUT=/path/to/results
+    export BB_THREAD_STORAGE=/path/to/your/thread/storage   # required; there is no /tmp fallback
+    export HERMES_SRC=/path/to/hermes-agent                 # a Hermes checkout (renderer and Python path), kept read-only
+    export HERMES_PY=/path/to/hermes/venv/bin/python        # optional
     python3 scripts/rehearsal/rehearse.py install     # clean-home install rehearsal, PASS/FAIL
     python3 scripts/rehearsal/rehearse.py checklist   # open / status / assign, pane vs 2D board, 3 trials each
     python3 scripts/rehearsal/rehearse.py shots       # art-audit screenshots (SHOTS_MODES=fixture or fixture,live)
     python3 scripts/rehearsal/rehearse.py perf --cards 110   # frame pacing; check `uptime` first
+    python3 scripts/rehearsal/rehearse.py verdict out/checklist.json   # re-judge a saved checklist (exit 0 only if it passes)
+    python3 scripts/rehearsal/rehearse.py selftest    # offline checks: redaction, confinement, ownership, verdict
 
 The plugin is installed from the committed HEAD of this repository (`SRC_URL` overrides), so commit before a rehearsal.
-Results are JSON plus JPEG screenshots in `OUT`. Rendering is software WebGL, so frame rates are a floor, not a GPU figure.
+Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering is software WebGL, so frame rates are a floor, not a GPU figure.
+
+## What the harness guarantees
+
+- **Confinement.** `BB_THREAD_STORAGE` must be an absolute existing directory (not `/`, your home or the system temp dir).
+  Each run creates a fresh `foundry-rh-run.*` directory under it (printed as `RUN`) and puts scratch homes, temporary
+  scripts, temp files and evidence there. There are no `RH_ROOT` or `OUT` overrides, and every path is checked to resolve
+  inside the run directory.
+- **Cleanup.** Cleanup runs on success, failure, timeout, Ctrl-C, SIGTERM and SIGHUP (nested `finally`/`ExitStack`: the browser is
+  closed, then the home's processes are stopped, then the home is removed; each step runs even if another fails).
+  A cleanup failure fails the run and is never swallowed. A run that is killed with SIGKILL, or a host crash, cannot clean up:
+  look for leftover `foundry-rh-run.*` directories under thread storage.
+- **No kill by port.** Every Hermes process is started with a per-run token in its environment. A process is signalled only if it
+  belongs to this user, is not the harness, and its environment names both this run's scratch `HERMES_HOME` and the token.
+  A process that merely listens on the port is reported and left alone. `cleanup_home.sh` removes a home only if it is a direct child of
+  the homes directory named `foundry-rh.*`, is not a symlink, and holds the ownership marker with this run's token.
+- **Secrets.** The one-use sign-in link is never written to disk outside the scratch home: the browser scripts that carry it live
+  in the home's `scripts/` directory (mode 0700) and are deleted right after use, and the link is not persisted. Sign-in tickets,
+  tokens and bearer values are redacted from every printed diagnostic and every evidence file.
+- **Read-only Hermes checkout.** `PYTHONDONTWRITEBYTECODE=1` is set for every Hermes subprocess and `TMPDIR` points inside the home.
+- **Exit codes.** `checklist` exits 0 only if every trial, UI check, scene check and database check passed (all three trials in the
+  pane and on the board, `ok` and `scene_ok` true, every database row matching). `shots` exits non-zero if any target card or image is
+  missing; live mode seeds blocked and done cards so the targets exist. `install` and `perf` exit non-zero on any failed check.

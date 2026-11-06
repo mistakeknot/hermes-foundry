@@ -6,27 +6,96 @@ Subcommands (each creates its own scratch HERMES_HOME and removes it on exit unl
             opt in to the desktop half, open the pane in headless Chromium, check it rendered. PASS/FAIL.
   checklist timed interaction checklist: open a card, change its status, assign a profile, in the pane and in
             the 2D kanban board of the same Webapp, same browser, same kanban database (live mode).
+            Exit 0 only if every trial, UI check, scene check and DB check passed.
   perf      frame pacing at 30 and N (default 110) cards in the pane, with the host load recorded.
-  shots     screenshots of the pane for the art audit (SHOTS_MODES=fixture,live).
-  up/down   start or stop a scratch home by hand (state in <home>/rehearsal.json).
+  shots     screenshots of the pane for the art audit (SHOTS_MODES=fixture,live). The live run seeds blocked
+            and done cards; a missing card or screenshot fails the run.
+  verdict F re-judge a saved checklist.json (exit 0 only if it passes); selftest runs offline unit checks.
+  up/down   (not provided: every run owns its scratch home and removes it)
 
-Environment (defaults in brackets):
+Confinement (no override, no fallback): BB_THREAD_STORAGE must name your thread storage directory. Each run makes a
+fresh directory foundry-rh-run.* under it and keeps everything inside: scratch homes (homes/), temporary scripts and
+temp files (inside the home), and evidence (out/). The path is printed as RUN.
+
+Environment:
+  BB_THREAD_STORAGE  thread storage directory [required]
   HERMES_SRC  Hermes checkout used as PYTHONPATH and for the prebuilt Webapp renderer [required]
   HERMES_PY   python of the Hermes venv [the interpreter named in the `hermes` shebang]
   SRC_URL     where `hermes plugins install` reads the plugin [file://<this repo>] (committed HEAD only)
   BB_HOST     host id for `bb browser-automation` [from `bb status --json`]
-  RH_ROOT     parent of scratch homes [$BB_THREAD_STORAGE/rh]; homes are removed only by cleanup_home.sh
-  OUT         directory for results and screenshots [./rehearsal-out]
+  SHOTS_MODES fixture,live
 """
-import argparse, json, os, re, shutil, socket, subprocess, sys, tempfile, time
+import argparse, contextlib, json, os, re, secrets, shutil, signal, socket, subprocess, sys, tempfile, time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-SRC = os.environ.get("HERMES_SRC") or sys.exit("set HERMES_SRC to a Hermes checkout")
-OUT = os.path.abspath(os.environ.get("OUT", "rehearsal-out"))
+SRC = os.environ.get("HERMES_SRC")
 SRC_URL = os.environ.get("SRC_URL", "file://" + REPO)
 JSDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "js")
+CLEANUP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cleanup_home.sh")
+TOKEN = secrets.token_hex(8)        # marks every process and home this run owns (never a credential)
+LAUNCHED = []                       # pids of every Hermes process this run started directly
+SECRETS = set()                     # sign-in tickets seen this run: redacted everywhere
+STORAGE = RUN = RH_ROOT = OUT = None
 
 
+# ---- redaction ----------------------------------------------------------------------------------------------
+_TICKET = re.compile(r"(ticket=)[^\s\"'&<>)\]]+", re.I)
+_KV = re.compile(r"(?i)\b(token|secret|password|authorization|api[_-]?key)([\"']?\s*[=:]\s*[\"']?)([^\s\"',}]+)")
+_BEARER = re.compile(r"(?i)\b(bearer\s+)([A-Za-z0-9._~+/=-]+)")
+
+
+def redact(s):
+    """Remove sign-in tickets and tokens from any text that is printed or saved."""
+    s = str(s)
+    for v in SECRETS:
+        s = s.replace(v, "<redacted>")
+    s = _TICKET.sub(r"\1<redacted>", s)
+    s = _BEARER.sub(r"\1<redacted>", s)          # before the key/value rule, which would eat the word "Bearer"
+    return _KV.sub(r"\1\2<redacted>", s)
+
+
+def write_evidence(path, obj):
+    """Every evidence file goes through redact()."""
+    text = redact(json.dumps(obj, indent=1))
+    with open(path, "w") as f:
+        f.write(text)
+
+
+# ---- confinement --------------------------------------------------------------------------------------------
+def inside(path, root):
+    r = os.path.realpath(root)
+    p = os.path.realpath(path)
+    return p != r and p.startswith(r + os.sep)
+
+
+def confine(storage_env):
+    """Create the unique run directory under thread storage and return (storage, run, homes, out). No fallback."""
+    if not storage_env or not os.path.isabs(storage_env) or not os.path.isdir(storage_env):
+        sys.exit("BB_THREAD_STORAGE must be set to your absolute thread storage directory (there is no /tmp fallback)")
+    storage = os.path.realpath(storage_env)
+    if storage in ("/", os.path.realpath(os.path.expanduser("~")), os.path.realpath(tempfile.gettempdir())):
+        sys.exit("refusing: BB_THREAD_STORAGE resolves to " + storage)
+    run = tempfile.mkdtemp(prefix="foundry-rh-run.", dir=storage)
+    os.chmod(run, 0o700)
+    homes, out, tmp = (os.path.join(run, d) for d in ("homes", "out", "tmp"))
+    for d in (homes, out, tmp):
+        os.makedirs(d, mode=0o700)
+        if not inside(d, run) or not inside(run, storage):
+            sys.exit("refusing: " + d + " does not resolve inside the run directory")
+    return storage, run, homes, out
+
+
+def init_run():
+    global STORAGE, RUN, RH_ROOT, OUT
+    if not SRC or not os.path.isdir(SRC):
+        sys.exit("set HERMES_SRC to a Hermes checkout")
+    STORAGE, RUN, RH_ROOT, OUT = confine(os.environ.get("BB_THREAD_STORAGE"))
+    tempfile.tempdir = os.path.join(RUN, "tmp")
+    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+    print("RUN", RUN, flush=True)
+
+
+# ---- hermes processes ---------------------------------------------------------------------------------------
 def hermes_py():
     if os.environ.get("HERMES_PY"):
         return os.environ["HERMES_PY"]
@@ -46,10 +115,6 @@ def bb_host():
     return d["thread"]["environment"]["hostId"]
 
 
-RH_ROOT = os.path.abspath(os.environ.get("RH_ROOT") or os.path.join(os.environ.get("BB_THREAD_STORAGE") or tempfile.gettempdir(), "rh"))
-CLEANUP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cleanup_home.sh")
-
-
 def free_port():
     fp = shutil.which("free-port")          # the fleet's allocator; never a remembered or default port
     if fp:
@@ -59,7 +124,8 @@ def free_port():
 
 
 def henv(hh, live=False, extra=None):
-    e = dict(os.environ, HERMES_HOME=hh, PYTHONPATH=SRC)
+    e = dict(os.environ, HERMES_HOME=hh, PYTHONPATH=SRC, PYTHONDONTWRITEBYTECODE="1", FOUNDRY_RH_TOKEN=TOKEN,
+             TMPDIR=os.path.join(hh, "tmp"))
     for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"):
         e.pop(k, None)
     e.pop("FOUNDRY_MODE", None); e.pop("FOUNDRY_REPLAY", None)
@@ -71,9 +137,22 @@ def henv(hh, live=False, extra=None):
     return e
 
 
+def run_tracked(cmd, env, timeout):
+    """Run a command in its own session, record its pid, and on timeout kill only the group this call created."""
+    p = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    LAUNCHED.append(p.pid)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(p.pid, signal.SIGKILL)      # pgid == pid: we made this session
+        p.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+
 def hermes(hh, args, live=False, timeout=120, wrap=()):
-    return subprocess.run(list(wrap) + ["nice", "-n", "19", hermes_py(), "-m", "hermes_cli.main"] + args, env=henv(hh, live),
-                          capture_output=True, text=True, timeout=timeout)
+    return run_tracked(list(wrap) + ["nice", "-n", "19", hermes_py(), "-m", "hermes_cli.main"] + args, henv(hh, live), timeout)
 
 
 def listener_pid(port):
@@ -85,80 +164,134 @@ def listener_pid(port):
 def mint(hh, port, live):
     """Start (or reuse) the Webapp for this home and return a one-use sign-in URL (valid 60 s)."""
     r = hermes(hh, ["webapp", "--no-open", "--skip-build"], live, timeout=60, wrap=["timeout", "45"])
-    m = re.search(r"(http://127\.0\.0\.1:(\d+)/webapp/launch#ticket=[A-Za-z0-9_-]+)", r.stdout + r.stderr)
+    text = r.stdout + r.stderr
+    m = re.search(r"(http://127\.0\.0\.1:(\d+)/webapp/launch#ticket=([A-Za-z0-9_-]+))", text)
     if not m:
-        raise RuntimeError("no sign-in link: " + (r.stdout + r.stderr)[-400:])
+        raise RuntimeError("no sign-in link: " + redact(text)[-400:])
+    SECRETS.add(m.group(3))
     return m.group(1)
 
 
-def up(live=False, boards=None):
+# ---- scratch home lifecycle ---------------------------------------------------------------------------------
+def owned(pid, home):
+    """True only for a process of this user whose environment names this home AND this run's token."""
+    if pid == os.getpid():
+        return False
+    try:
+        if os.stat(f"/proc/{pid}").st_uid != os.getuid():
+            return False
+        env = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
+    except OSError:
+        return False
+    return ("HERMES_HOME=" + home).encode() in env and ("FOUNDRY_RH_TOKEN=" + TOKEN).encode() in env
+
+
+def owned_pids(home):
+    found = set()
+    for d in os.listdir("/proc"):
+        if d.isdigit() and owned(int(d), home):
+            found.add(int(d))
+    return found
+
+
+def up(live=False, boards=None, states=None):
     """Create a scratch home and start the Webapp; on any failure stop it and remove the home before re-raising."""
     st = {}
     try:
-        return _up(st, live, boards)
+        return _up(st, live, boards, states)
     except BaseException:
         if st.get("home"):
-            down(st)
+            with contextlib.suppress(Exception):
+                down(st)
         raise
 
 
-def _up(st, live, boards):
-    os.makedirs(RH_ROOT, exist_ok=True)
+def write_marker(st):
+    path = os.path.join(st["home"], ".foundry-rh-owner")
+    with open(path, "w") as f:
+        f.write(TOKEN)
+    os.chmod(path, 0o600)
+    d = {k: st[k] for k in ("home", "port", "live")}      # no sign-in URL is ever persisted
+    with open(os.path.join(st["home"], "rehearsal.json"), "w") as f:
+        json.dump(d, f)
+
+
+def _up(st, live, boards, states):
     hh = tempfile.mkdtemp(prefix="foundry-rh.", dir=RH_ROOT)
+    st.update({"home": hh, "live": live})
+    if not inside(hh, RUN):
+        raise RuntimeError("scratch home escaped the run directory: " + hh)
+    for d in ("tmp", "scripts"):
+        os.makedirs(os.path.join(hh, d), mode=0o700)
     port = free_port()
+    st["port"] = port
+    write_marker(st)
     with open(os.path.join(hh, "config.yaml"), "w") as f:
         f.write(f"webapp:\n  enabled: true\n  host: 127.0.0.1\n  port: {port}\n")
-    st.update({"home": hh, "port": port, "live": live})
-    json.dump(st, open(os.path.join(hh, "rehearsal.json"), "w"))
     r = hermes(hh, ["plugins", "install", SRC_URL, "--no-enable"])
-    if r.returncode: raise RuntimeError("plugin install failed: " + (r.stdout + r.stderr)[-500:])
+    if r.returncode: raise RuntimeError("plugin install failed: " + redact(r.stdout + r.stderr)[-500:])
     r = hermes(hh, ["plugins", "enable", "foundry"])
-    if r.returncode: raise RuntimeError("plugin enable failed: " + (r.stdout + r.stderr)[-500:])
+    if r.returncode: raise RuntimeError("plugin enable failed: " + redact(r.stdout + r.stderr)[-500:])
     if live and boards:
-        seed(hh, boards)
-    url = None
+        seed(hh, boards, states)
     for attempt in (1, 2):
         try:
-            url = mint(hh, port, live)
+            mint(hh, port, live)
             break
         except RuntimeError:
             # Known Hermes quirk on a brand-new home (pydantic ArgsKwargs): stop what we started, reset that home's state.
             stop_home(st)
-            subprocess.run(["bash", CLEANUP, "--reset", hh], env=dict(os.environ, RH_ROOT=RH_ROOT), check=True)
+            cleanup_script(hh, reset=True)
             if attempt == 2: raise
     for _ in range(60):
         if listener_pid(port): break
         time.sleep(0.5)
-    st["url"] = url
-    json.dump(st, open(os.path.join(hh, "rehearsal.json"), "w"))
     return st
 
 
 def stop_home(st):
-    """Stop every process this harness started for the home: the Webapp listener and its gateway."""
+    """Stop the processes this run launched for the home. Ownership (home AND run token) is checked before every
+    signal; a process that merely listens on the port is never signalled."""
     hh = st["home"]
-    pids = set()
-    pid = listener_pid(st["port"]) if st.get("port") else None
-    if pid: pids.add(pid)
-    for d in os.listdir("/proc"):
-        if d.isdigit() and int(d) != os.getpid():
-            try:
-                env = open(f"/proc/{d}/environ", "rb").read().split(b"\0")
-            except OSError:
-                continue
-            if ("HERMES_HOME=" + hh).encode() in env: pids.add(int(d))
-    for sig in (15, 9):
-        for p in list(pids):
-            try: os.kill(p, sig)
-            except ProcessLookupError: pids.discard(p)
+    cand = {p for p in LAUNCHED if os.path.exists(f"/proc/{p}")} | owned_pids(hh)
+    lp = listener_pid(st["port"]) if st.get("port") else None
+    if lp and lp not in cand and not owned(lp, hh):
+        print(f"note: pid {lp} listens on port {st['port']} but this run does not own it; left alone", flush=True)
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        mine = {p for p in cand if owned(p, hh)}
+        for p in mine:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                if owned(p, hh): os.kill(p, sig)
         for _ in range(25):
-            if not any(os.path.exists(f"/proc/{p}") for p in pids): break
+            if not any(owned(p, hh) for p in mine): break
             time.sleep(0.2)
+    left = owned_pids(hh)
+    if left:
+        raise RuntimeError(f"could not stop processes of {hh}: {sorted(left)}")
+
+
+def cleanup_script(home, reset=False):
+    subprocess.run(["bash", CLEANUP] + (["--reset"] if reset else []) + [home],
+                   env=dict(os.environ, RH_ROOT=RH_ROOT, FOUNDRY_RH_TOKEN=TOKEN), check=True)
+
+
+@contextlib.contextmanager
+def uninterruptible():
+    """Cleanup must finish: ignore a second signal while it runs."""
+    old = {s: signal.signal(s, signal.SIG_IGN) for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    try:
+        yield
+    finally:
+        for s, h in old.items(): signal.signal(s, h)
 
 
 def down(st):
-    stop_home(st)
-    subprocess.run(["bash", CLEANUP, st["home"]], env=dict(os.environ, RH_ROOT=RH_ROOT))
+    """Stop the home's processes, then remove the home. A failure in either step raises."""
+    with uninterruptible():
+        try:
+            stop_home(st)
+        finally:
+            cleanup_script(st["home"])
 
 
 SEED = r'''
@@ -166,6 +299,7 @@ import os, sys, json
 sys.path.insert(0, os.environ["PYTHONPATH"].split(os.pathsep)[0])
 from hermes_cli import kanban_db as kb, kanban_db_boards as boards, kanban_db_connect as kc
 spec = json.loads(sys.argv[1])           # {"atlas": 40, "harbor": 40, ...}
+states = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}    # {"blocked": 2, "done": 2}, added to the default board
 ids = {}
 from hermes_cli import profiles as pr
 for name in ("coder", "reviewer"):       # real profiles, so the 2D board's assignee menu lists them
@@ -178,33 +312,56 @@ for slug, n in spec.items():
         for i in range(n):
             t = kb.create_task(c, title=f"{slug} task {i:03d}", board=slug, assignee=("coder" if i % 7 == 0 else None))
             ids.setdefault(slug, []).append(t)
-        # a few claimed (running) and some blocked, so every colour appears
+        # a few claimed (running), so that colour appears
         for t in ids[slug][: max(1, n // 12)]:
             kb.claim_task(c, t, claimer="coder")
+    finally:
+        c.close()
+if states:
+    c = kc.connect(board="default")
+    try:
+        for kind, n in states.items():
+            for i in range(n):
+                title = f"default {kind} {i:02d}"
+                if kind == "blocked":
+                    kb.create_task(c, title=title, board="default", initial_status="blocked")
+                elif kind == "done":
+                    t = kb.create_task(c, title=title, board="default")
+                    if not kb.complete_task(c, t, result="rehearsal seed: evidence for a done card"):
+                        raise SystemExit("could not complete " + title)
+                else:
+                    raise SystemExit("unknown state " + kind)
     finally:
         c.close()
 print(json.dumps(ids))
 '''
 
 
-def seed(hh, spec):
-    r = subprocess.run([hermes_py(), "-c", SEED, json.dumps(spec)], env=henv(hh, True), capture_output=True, text=True, timeout=300)
-    if r.returncode: raise RuntimeError("seed failed: " + r.stderr[-600:])
-    json.dump(json.loads(r.stdout.strip().splitlines()[-1]), open(os.path.join(hh, "seeded.json"), "w"))
+def seed(hh, spec, states=None):
+    r = run_tracked([hermes_py(), "-c", SEED, json.dumps(spec), json.dumps(states or {})], henv(hh, True), 300)
+    if r.returncode: raise RuntimeError("seed failed: " + redact(r.stderr)[-600:])
+    with open(os.path.join(hh, "seeded.json"), "w") as f:
+        json.dump(json.loads(r.stdout.strip().splitlines()[-1]), f)
 
 
 # ---- browser ----------------------------------------------------------------------------------------------
 class Browser:
-    def __init__(self):
+    def __init__(self, scriptdir):
+        """scriptdir is inside the scratch home: sign-in scripts hold a one-use ticket and live only there."""
+        self.sdir = scriptdir
+        os.makedirs(self.sdir, mode=0o700, exist_ok=True)
         self.host = bb_host()
+        self.sid = None
         r = subprocess.run(["bb", "browser-automation", "open", "--backend", "local", "--headless", "--machine", self.host, "--json"],
                            capture_output=True, text=True, timeout=180)
         d = json.loads(r.stdout)
         self.sid = d.get("id") or d.get("sessionId") or d["session"]["id"]
         self.directive = d.get("previewDirective")
+        self.images = []
 
     def run(self, js, timeout=90):
-        fd, path = tempfile.mkstemp(suffix=".js", prefix="foundry-rh-js."); os.write(fd, js.encode()); os.close(fd)
+        fd, path = tempfile.mkstemp(suffix=".js", prefix="js.", dir=self.sdir)      # mode 0600, inside the scratch home
+        os.write(fd, js.encode()); os.close(fd)
         try:
             r = subprocess.run(["bb", "browser-automation", "run", self.sid, "--script-file", path, "--script-host", self.host,
                                 "--timeout", f"{timeout}s", "--json"], capture_output=True, text=True, timeout=timeout + 30)
@@ -213,23 +370,30 @@ class Browser:
         try:
             d = json.loads(r.stdout)
         except Exception:
-            raise RuntimeError("browser run failed: " + (r.stdout + r.stderr)[-500:])
-        if d.get("ok") is False or d.get("exitCode"): raise RuntimeError("browser script error: " + str(d)[-500:])
+            raise RuntimeError("browser run failed: " + redact(r.stdout + r.stderr)[-500:])
+        if d.get("ok") is False or d.get("exitCode"): raise RuntimeError("browser script error: " + redact(str(d))[-500:])
         self.raw = d; self.images = d.get("images", [])
         txt = d.get("text")
         try: return json.loads(txt)
         except Exception: return txt
 
     def keep_shot(self, name):
-        """Copy the newest screenshot of the last run into OUT/<name>.jpg."""
-        os.makedirs(OUT, exist_ok=True)
-        if not self.images: return None
+        """Copy the newest screenshot of the last run into OUT/<name>.jpg; a missing or empty image raises."""
+        if not self.images:
+            raise RuntimeError("no screenshot returned for " + name)
+        src = self.images[-1]["path"]
+        if not os.path.isfile(src) or os.path.getsize(src) == 0:
+            raise RuntimeError("screenshot file missing or empty for " + name)
         dest = os.path.join(OUT, name + ".jpg")
-        shutil.copy(self.images[-1]["path"], dest)
+        shutil.copy(src, dest)
         return dest
 
     def close(self):
-        subprocess.run(["bb", "browser-automation", "close", self.sid, "--json"], capture_output=True, text=True, timeout=60)
+        if not self.sid: return
+        with uninterruptible():
+            r = subprocess.run(["bb", "browser-automation", "close", self.sid, "--json"], capture_output=True, text=True, timeout=60)
+        if r.returncode and "session_unavailable" not in (r.stdout + r.stderr):
+            raise RuntimeError("browser close failed: " + redact(r.stdout + r.stderr)[-300:])
 
 
 def js(name, **kw):
@@ -255,41 +419,56 @@ def open_pane(b, tries=30):
     return b.run(js("openpane.js", STAGE="shot"), 60)
 
 
+@contextlib.contextmanager
+def session(a, live, boards=None, states=None):
+    """A scratch home plus a browser. Cleanup is nested so each step runs even if the other fails: the browser is
+    closed first, then the home's processes are stopped and the home removed; failures propagate."""
+    with contextlib.ExitStack() as stack:
+        st = up(live=live, boards=boards, states=states)
+        if not a.keep: stack.callback(down, st)          # registered first, so it runs last
+        b = Browser(os.path.join(st["home"], "scripts"))
+        stack.callback(b.close)
+        print(b.directive or "", flush=True)
+        yield st, b
+
+
+def head():
+    return subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
 # ---- subcommands ----------------------------------------------------------------------------------------
 def cmd_install(a):
-    os.makedirs(OUT, exist_ok=True)
     t0 = time.time(); checks = []
 
     def check(name, ok, detail=""):
-        checks.append({"check": name, "ok": bool(ok), "detail": detail}); print(("PASS " if ok else "FAIL ") + name + (" - " + str(detail) if detail else ""))
-    st = None; b = None
+        detail = redact(detail)
+        checks.append({"check": name, "ok": bool(ok), "detail": detail}); print(("PASS " if ok else "FAIL ") + name + (" - " + detail if detail else ""))
+    stop = None
     try:
-        st = up(live=False)
-        check("plugin installed and enabled; Webapp listening", listener_pid(st["port"]), f"port {st['port']}")
-        d = os.path.join(st["home"], "plugins", "foundry")
-        check("agent half present", os.path.isfile(os.path.join(d, "plugin.yaml")), d)
-        b = Browser()
-        print(b.directive or "")
-        r = signin(b, st)
-        check("opt-in recorded without losing other decisions", r and r.get("dec", {}).get("foundry") is True, r and r.get("dec"))
-        check("desktop half copied to desktop-plugins (first Webapp request)", os.path.isfile(os.path.join(st["home"], "desktop-plugins", "foundry", "plugin.js")))
-        r = open_pane(b)
-        b.keep_shot("install-pane")
-        check("Foundry nav item present after opt-in", r and r.get("nav"), r and r.get("nav"))
-        check("pane rendered in fixture mode", r and r.get("has") and r.get("mode") == "fixture", r and {k: r.get(k) for k in ("mode", "creatures", "cards")})
-        check("fixture is labelled simulated", r and r.get("simulated"))
-        check("at least one creature and several cards", r and (r.get("creatures") or 0) >= 3 and (r.get("cards") or 0) >= 10, r and (r.get("creatures"), r.get("cards")))
-        code = subprocess.run(["curl", "-s", "-m", "5", "-o", "/dev/null", "-w", "%{http_code}", f"http://127.0.0.1:{st['port']}/api/plugins/foundry/snapshot"], capture_output=True, text=True).stdout
-        check("router refuses a request without the session token", code == "401", code)
-    except Exception as e:
+        with session(a, live=False) as (st, b):
+            check("plugin installed and enabled; Webapp listening", listener_pid(st["port"]), f"port {st['port']}")
+            d = os.path.join(st["home"], "plugins", "foundry")
+            check("agent half present", os.path.isfile(os.path.join(d, "plugin.yaml")), d)
+            r = signin(b, st)
+            check("opt-in recorded without losing other decisions", r and r.get("dec", {}).get("foundry") is True, r and r.get("dec"))
+            check("desktop half copied to desktop-plugins (first Webapp request)", os.path.isfile(os.path.join(st["home"], "desktop-plugins", "foundry", "plugin.js")))
+            r = open_pane(b)
+            b.keep_shot("install-pane")
+            check("Foundry nav item present after opt-in", r and r.get("nav"), r and r.get("nav"))
+            check("pane rendered in fixture mode", r and r.get("has") and r.get("mode") == "fixture", r and {k: r.get(k) for k in ("mode", "creatures", "cards")})
+            check("fixture is labelled simulated", r and r.get("simulated"))
+            check("at least one creature and several cards", r and (r.get("creatures") or 0) >= 3 and (r.get("cards") or 0) >= 10, r and (r.get("creatures"), r.get("cards")))
+            code = subprocess.run(["curl", "-s", "-m", "5", "-o", "/dev/null", "-w", "%{http_code}", f"http://127.0.0.1:{st['port']}/api/plugins/foundry/snapshot"], capture_output=True, text=True).stdout
+            check("router refuses a request without the session token", code == "401", code)
+        if a.keep: print("kept: scratch home and Webapp left running (--keep)")
+    except BaseException as e:        # includes cleanup failures and SIGTERM (SystemExit): recorded, then re-raised if not an Exception
         check("harness ran to completion", False, repr(e)[:300])
-    finally:
-        if b: b.close()
-        if st and not a.keep: down(st)
-    ok = all(c["ok"] for c in checks)
-    json.dump({"ok": ok, "seconds": round(time.time() - t0, 1), "checks": checks, "repo_head": subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()},
-              open(os.path.join(OUT, "install-rehearsal.json"), "w"), indent=1)
-    print("REHEARSAL " + ("PASS" if ok else "FAIL")); return 0 if ok else 1
+        if not isinstance(e, Exception): stop = e
+    ok = bool(checks) and all(c["ok"] for c in checks)
+    write_evidence(os.path.join(OUT, "install-rehearsal.json"), {"ok": ok, "seconds": round(time.time() - t0, 1), "checks": checks, "repo_head": head()})
+    print("REHEARSAL " + ("PASS" if ok else "FAIL"))
+    if stop: raise stop
+    return 0 if ok else 1
 
 
 VERIFY = r"""
@@ -305,7 +484,7 @@ print(json.dumps({"tasks": {t: [s, a] for t, s, a in c.execute("select title, st
 
 
 def db_state(st):
-    r = subprocess.run([hermes_py(), "-c", VERIFY], env=henv(st["home"], True), capture_output=True, text=True, timeout=60)
+    r = run_tracked([hermes_py(), "-c", VERIFY], henv(st["home"], True), 60)
     return json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else {}
 
 
@@ -313,95 +492,206 @@ def med(xs):
     xs = sorted(xs); return xs[len(xs) // 2] if xs else None
 
 
+STEP_ORDER = ["open", "status", "assign"]
+
+
+def checklist_verdict(res, plan, floor, server):
+    """Return the list of failures. Empty means every trial, UI check, scene check and DB check passed."""
+    f = []
+    n = len(plan)
+    if not (isinstance(floor, dict) and all(isinstance(floor.get(k), (int, float)) for k in ("eval_ms", "click_ms"))):
+        f.append("harness floor not measured")
+    for ui in ("pane", "board"):
+        trials = res.get(ui) or []
+        if len(trials) != n: f.append(f"{ui}: {len(trials)} trials completed, expected {n}")
+        for i, t in enumerate(trials):
+            steps = t.get("steps") or []
+            if [s.get("step") for s in steps] != STEP_ORDER:
+                f.append(f"{ui} trial {i}: steps {[s.get('step') for s in steps]}, expected {STEP_ORDER}")
+            for s in steps:
+                if s.get("ok") is not True: f.append(f"{ui} trial {i} {s.get('step')}: UI check failed (ok={s.get('ok')})")
+                if ui == "pane" and s.get("step") in ("status", "assign") and s.get("scene_ok") is not True:
+                    f.append(f"pane trial {i} {s.get('step')}: scene did not redraw (scene_ok={s.get('scene_ok')})")
+    if len(server) != 2 * n: f.append(f"{len(server)} DB checks, expected {2 * n}")
+    for x in server:
+        if x.get("ok") is not True: f.append(f"DB check {x.get('ui')} {x.get('card')}: want {x.get('want')}, got {x.get('db')}")
+    return f
+
+
 def cmd_checklist(a):
     """Open a card, change its status, assign a profile: three trials each in the pane and on the 2D board."""
-    os.makedirs(OUT, exist_ok=True)
     plan = [("blocked", "coder"), ("blocked", "reviewer"), ("blocked", "coder")]
-    st = None; b = None; res = {"pane": [], "board": []}; load = os.getloadavg()
+    res = {"pane": [], "board": []}; load = os.getloadavg(); floor = None; server = []; failures = []; stop = None
     try:
-        st = up(live=True, boards={"default": 30})
-        b = Browser(); print(b.directive or "", flush=True)
-        signin(b, st, enable=("foundry", "kanban"))
-        r = open_pane(b); print("pane ready:", {k: r.get(k) for k in ("mode", "creatures", "cards")}, flush=True)
-        floor = b.run(js("checklist.js", STAGE="floor", TRIAL=0, STATUS="", PROFILE=""), 60)
-        for i, (status, profile) in enumerate(plan):
-            res["pane"].append(b.run(js("checklist.js", STAGE="pane", TRIAL=i, STATUS=status, PROFILE=profile), 80))
-            if i == len(plan) - 1: b.keep_shot("checklist-pane-after")
-            print("pane trial", i, [(s["step"], s["ms"]) for s in res["pane"][-1]["steps"]], flush=True)
-        print("board:", b.run(js("navboard.js"), 60), flush=True)
-        for i, (status, profile) in enumerate(plan):
-            res["board"].append(b.run(js("checklist.js", STAGE="board", TRIAL=i, STATUS=status, PROFILE=profile), 80))
-            if i == len(plan) - 1: b.keep_shot("checklist-board-after")
-            print("board trial", i, [(s["step"], s["ms"]) for s in res["board"][-1]["steps"]], flush=True)
-        dbs = db_state(st); db = dbs.get("tasks", {}); events = dbs.get("events", {})
-        server = []
-        for ui in ("pane", "board"):
-            for t, (status, profile) in zip(res[ui], plan):
-                got = db.get(t["card"], ["?", "?"])
-                server.append({"ui": ui, "card": t["card"], "want": [status, profile], "db": got, "events": events.get(t["card"], []), "ok": got == [status, profile]})
-    finally:
-        json.dump(res, open(os.path.join(OUT, "checklist-partial.json"), "w"), indent=1)
-        if b: b.close()
-        if st and not a.keep: down(st)
+        with session(a, live=True, boards={"default": 30}) as (st, b):
+            signin(b, st, enable=("foundry", "kanban"))
+            r = open_pane(b); print("pane ready:", {k: r.get(k) for k in ("mode", "creatures", "cards")}, flush=True)
+            floor = b.run(js("checklist.js", STAGE="floor", TRIAL=0, STATUS="", PROFILE=""), 60)
+            try:
+                for i, (status, profile) in enumerate(plan):
+                    res["pane"].append(b.run(js("checklist.js", STAGE="pane", TRIAL=i, STATUS=status, PROFILE=profile), 80))
+                    if i == len(plan) - 1: b.keep_shot("checklist-pane-after")
+                    print("pane trial", i, [(s["step"], s["ms"]) for s in res["pane"][-1]["steps"]], flush=True)
+                print("board:", b.run(js("navboard.js"), 60), flush=True)
+                for i, (status, profile) in enumerate(plan):
+                    res["board"].append(b.run(js("checklist.js", STAGE="board", TRIAL=i, STATUS=status, PROFILE=profile), 80))
+                    if i == len(plan) - 1: b.keep_shot("checklist-board-after")
+                    print("board trial", i, [(s["step"], s["ms"]) for s in res["board"][-1]["steps"]], flush=True)
+            except Exception as e:
+                failures.append("trial aborted: " + redact(repr(e))[:300])
+            dbs = db_state(st); db = dbs.get("tasks", {}); events = dbs.get("events", {})
+            if not db: failures.append("DB state unreadable")
+            for ui in ("pane", "board"):
+                for t, (status, profile) in zip(res[ui], plan):
+                    got = db.get(t["card"], ["?", "?"])
+                    server.append({"ui": ui, "card": t["card"], "want": [status, profile], "db": got, "events": events.get(t["card"], []), "ok": got == [status, profile]})
+        if a.keep: print("kept: scratch home and Webapp left running (--keep)")
+    except BaseException as e:
+        failures.append("harness error: " + redact(repr(e))[:300])
+        if not isinstance(e, Exception): stop = e
+    failures += checklist_verdict(res, plan, floor, server)
     summ = {}
     for ui in ("pane", "board"):
-        for step in ("open", "status", "assign"):
-            rows = [x for t in res[ui] for x in t["steps"] if x["step"] == step]
+        for step in STEP_ORDER:
+            rows = [x for t in res[ui] for x in t.get("steps", []) if x["step"] == step]
+            if not rows: continue
             summ[f"{ui}.{step}"] = {"clicks": rows[0]["clicks"], "keys": rows[0]["keys"], "ms_median": med([x["ms"] for x in rows]), "ms_all": [x["ms"] for x in rows],
-                                    "ms_scene_median": med([x["ms_scene"] for x in rows if "ms_scene" in x]) if ui == "pane" else None, "all_ok": all(x["ok"] for x in rows)}
-    out = {"load_avg_at_start": load, "cpus": os.cpu_count(), "floor": floor, "summary": summ, "server_state": server, "trials": res,
-           "repo_head": subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()}
-    json.dump(out, open(os.path.join(OUT, "checklist.json"), "w"), indent=1)
-    print(json.dumps({"floor": floor, "summary": summ, "server_ok": all(x["ok"] for x in server)}, indent=1))
-    return 0 if all(x["ok"] for x in server) else 1
+                                    "ms_scene_median": med([x["ms_scene"] for x in rows if "ms_scene" in x]) if ui == "pane" else None,
+                                    "all_ok": all(x["ok"] is True for x in rows)}
+    out = {"pass": not failures, "failures": failures, "load_avg_at_start": load, "cpus": os.cpu_count(), "plan": plan, "floor": floor, "summary": summ,
+           "server_state": server, "trials": res, "repo_head": head()}
+    write_evidence(os.path.join(OUT, "checklist.json"), out)
+    print(redact(json.dumps({"floor": floor, "summary": summ, "pass": not failures, "failures": failures}, indent=1)))
+    print("CHECKLIST " + ("PASS" if not failures else "FAIL"))
+    if stop: raise stop
+    return 0 if not failures else 1
+
+
+def cmd_verdict(a):
+    """Re-judge a saved checklist.json with the same rules (exit 0 only if it passes)."""
+    d = json.load(open(a.path))
+    server = d.get("server_state") or []
+    plan = d.get("plan") or [tuple(x["want"]) for x in server if x.get("ui") == "pane"]
+    fails = checklist_verdict(d.get("trials") or {}, plan, d.get("floor"), server)
+    for x in fails: print("FAIL", x)
+    print("CHECKLIST " + ("PASS" if not fails else "FAIL"))
+    return 0 if not fails else 1
+
+
+SHOT_VIEWS = ("valley", "creature", "blocked", "done")
 
 
 def cmd_shots(a):
-    """Art-audit screenshots: valley, one creature, a blocked card and a done card up close, in fixture and live mode."""
-    os.makedirs(OUT, exist_ok=True)
-    meta = {}
-    for mode in os.environ.get("SHOTS_MODES", "fixture,live").split(","):
-        st = None; b = None
-        try:
-            st = up(live=(mode == "live"), boards={"default": 30} if mode == "live" else None)
-            b = Browser(); signin(b, st); open_pane(b)
-            for view in ("valley", "creature", "blocked", "done"):
-                info = b.run(js("shots.js", VIEW=view), 60)
-                name = f"art-{mode}-{view}"; b.keep_shot(name); meta[name] = info; print(name, json.dumps(info)[:200], flush=True)
-        finally:
-            if b: b.close()
-            if st and not a.keep: down(st)
-    json.dump({"load_avg": os.getloadavg(), "shots": meta}, open(os.path.join(OUT, "art-shots.json"), "w"), indent=1)
-    return 0
+    """Art-audit screenshots: valley, one creature, a blocked card and a done card up close, in fixture and live mode.
+    Live mode seeds blocked and done cards. A missing target card or a missing image fails the run."""
+    meta = {}; failures = []; stop = None
+    try:
+        for mode in os.environ.get("SHOTS_MODES", "fixture,live").split(","):
+            live = mode == "live"
+            with session(a, live=live, boards={"default": 30} if live else None, states={"blocked": 2, "done": 2} if live else None) as (st, b):
+                signin(b, st); open_pane(b)
+                for view in SHOT_VIEWS:
+                    name = f"art-{mode}-{view}"
+                    try:
+                        info = b.run(js("shots.js", VIEW=view), 60)
+                        if not isinstance(info, dict) or info.get("missing"): raise RuntimeError(f"no {view} card: {info}")
+                        b.keep_shot(name); meta[name] = info; print(name, redact(json.dumps(info))[:200], flush=True)
+                    except Exception as e:
+                        failures.append(f"{name}: {redact(repr(e))[:300]}"); print("FAIL", failures[-1], flush=True)
+    except BaseException as e:
+        failures.append("harness error: " + redact(repr(e))[:300])
+        if not isinstance(e, Exception): stop = e
+    for mode in os.environ.get("SHOTS_MODES", "fixture,live").split(","):      # every required image must exist
+        for view in SHOT_VIEWS:
+            p = os.path.join(OUT, f"art-{mode}-{view}.jpg")
+            if not (os.path.isfile(p) and os.path.getsize(p) > 0): failures.append(f"missing image art-{mode}-{view}.jpg")
+    write_evidence(os.path.join(OUT, "art-shots.json"), {"pass": not failures, "failures": failures, "load_avg": os.getloadavg(), "shots": meta})
+    print("SHOTS " + ("PASS" if not failures else "FAIL"))
+    if stop: raise stop
+    return 0 if not failures else 1
 
 
 def cmd_perf(a):
     """Frame pacing at a baseline (30 cards) and at --cards (default 110) in live mode. Records host load before and after."""
-    os.makedirs(OUT, exist_ok=True)
-    runs = {}; load0 = os.getloadavg()
-    for n in (30, a.cards):
-        spec = {"default": n} if n == 30 else {"default": n // 2, "alpha": n // 4, "beta": n - n // 2 - n // 4}
-        st = None; b = None
+    runs = {}; load0 = os.getloadavg(); failures = []; stop = None
+    try:
+        for n in (30, a.cards):
+            spec = {"default": n} if n == 30 else {"default": n // 2, "alpha": n // 4, "beta": n - n // 2 - n // 4}
+            with session(a, live=True, boards=spec) as (st, b):
+                signin(b, st); open_pane(b)
+                time.sleep(2)
+                lo = os.getloadavg()
+                r = b.run(js("perf.js", SECONDS=6), 60)
+                if not isinstance(r, dict): raise RuntimeError(f"perf run returned {r!r}")
+                r["load_before"] = lo; r["load_after"] = os.getloadavg()
+                runs[f"cards_{n}"] = r; print(n, redact(json.dumps(r))[:400], flush=True)
+    except BaseException as e:
+        failures.append("harness error: " + redact(repr(e))[:300])
+        if not isinstance(e, Exception): stop = e
+    write_evidence(os.path.join(OUT, "perf.json"), {"pass": not failures, "failures": failures, "load_at_start": load0, "cpus": os.cpu_count(),
+                   "note": "headless Chromium, software WebGL (SwiftShader), no GPU", "runs": runs, "repo_head": head()})
+    print("PERF " + ("PASS" if not failures else "FAIL"))
+    if stop: raise stop
+    return 0 if not failures else 1
+
+
+def cmd_selftest(a):
+    """Offline checks of the pure parts: redaction, confinement, process ownership, checklist verdict."""
+    bad = []
+
+    def t(name, ok):
+        print(("PASS " if ok else "FAIL ") + name)
+        if not ok: bad.append(name)
+    SECRETS.add("s3cr3tvalue")
+    t("redact ticket", "abc123" not in redact("http://x/webapp/launch#ticket=abc123 ok"))
+    t("redact known secret", "s3cr3tvalue" not in redact("saw s3cr3tvalue here"))
+    t("redact token kv", "xyz" not in redact('{"token": "xyz"}') and "xyz" not in redact("Authorization: Bearer xyz"))
+    with tempfile.TemporaryDirectory(prefix="rh-selftest.") as td:
+        td = os.path.realpath(td)
+        s, run, homes, out = confine(td)
+        t("confine makes unique run dir under storage", inside(run, s) and inside(homes, run) and inside(out, run))
+        t("confine run dir is unique", confine(td)[1] != run)
+        os.symlink("/tmp", os.path.join(run, "link"))
+        t("symlink out of the run dir is not inside", not inside(os.path.join(run, "link", "x"), run))
+        t("an unrelated path is not inside", not inside(td, run))
+    for bad_env in (None, "", "relative/path", "/nonexistent-dir-xyz", "/"):
         try:
-            st = up(live=True, boards=spec)
-            b = Browser(); signin(b, st); open_pane(b)
-            time.sleep(2)
-            lo = os.getloadavg()
-            r = b.run(js("perf.js", SECONDS=6), 60); r["load_before"] = lo; r["load_after"] = os.getloadavg()
-            runs[f"cards_{n}"] = r; print(n, json.dumps(r)[:400], flush=True)
-        finally:
-            if b: b.close()
-            if st and not a.keep: down(st)
-    json.dump({"load_at_start": load0, "cpus": os.cpu_count(), "note": "headless Chromium, software WebGL (SwiftShader), no GPU", "runs": runs,
-               "repo_head": subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()},
-              open(os.path.join(OUT, "perf.json"), "w"), indent=1)
-    return 0
+            confine(bad_env); t(f"confine refuses {bad_env!r}", False)
+        except SystemExit:
+            t(f"confine refuses {bad_env!r}", True)
+    t("a process that is not ours is not owned", not owned(1, "/nonexistent/home"))
+    t("this process is never owned", not owned(os.getpid(), "/x"))
+    plan = [("blocked", "coder")] * 3
+    step = lambda n, **k: dict(step=n, ms=1, clicks=1, keys=0, ok=True, **k)
+    pane = [{"card": f"c{i}", "steps": [step("open"), step("status", scene_ok=True), step("assign", scene_ok=True)]} for i in range(3)]
+    board = [{"card": f"b{i}", "steps": [step("open"), step("status"), step("assign")]} for i in range(3)]
+    server = [{"ui": u, "card": c["card"], "want": ["blocked", "coder"], "db": ["blocked", "coder"], "ok": True} for u, cs in (("pane", pane), ("board", board)) for c in cs]
+    floor = {"eval_ms": 1, "click_ms": 2}
+    good = lambda: ({"pane": json.loads(json.dumps(pane)), "board": json.loads(json.dumps(board))}, json.loads(json.dumps(server)))
+    r, s2 = good(); t("verdict passes a clean run", checklist_verdict(r, plan, floor, s2) == [])
+    r, s2 = good(); r["pane"][1]["steps"][1]["ok"] = False; t("verdict fails on ok:false", bool(checklist_verdict(r, plan, floor, s2)))
+    r, s2 = good(); r["pane"][2]["steps"][2]["scene_ok"] = False; t("verdict fails on scene_ok:false", bool(checklist_verdict(r, plan, floor, s2)))
+    r, s2 = good(); s2[4]["ok"] = False; t("verdict fails on a DB mismatch", bool(checklist_verdict(r, plan, floor, s2)))
+    r, s2 = good(); r["board"].pop(); t("verdict fails on a missing trial", bool(checklist_verdict(r, plan, floor, s2)))
+    r, s2 = good(); t("verdict fails without the floor", bool(checklist_verdict(r, plan, None, s2)))
+    print("SELFTEST " + ("FAIL" if bad else "PASS"))
+    return 1 if bad else 0
+
+
+def _term(sig, frame):
+    raise SystemExit(128 + sig)      # unwinds through every finally / ExitStack, so scratch homes are always removed
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for n in ("install", "checklist", "perf", "shots"):
-        p = sub.add_parser(n); p.add_argument("--keep", action="store_true"); p.add_argument("--cards", type=int, default=110); p.add_argument("--home")
+        p = sub.add_parser(n); p.add_argument("--keep", action="store_true"); p.add_argument("--cards", type=int, default=110)
+    sub.add_parser("verdict").add_argument("path")
+    sub.add_parser("selftest")
     a = ap.parse_args()
+    for s in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, _term)
+    if a.cmd not in ("verdict", "selftest"):
+        init_run()
     sys.exit(globals()["cmd_" + a.cmd](a))
