@@ -11,7 +11,7 @@ It ships as one Hermes plugin with three parts:
 - a **dashboard router** (`/api/plugins/foundry/`) that serves a snapshot, an event feed and commands;
 - three **agent tools** (toolset `foundry`).
 
-By default it runs against a built-in **fixture**: a scripted factory that needs no model, no API keys and no kanban
+By default it runs against a built-in **fixture**: a scripted factory that makes no model call and needs no kanban
 data, so you can try it on any Hermes. Live mode drives the real Hermes kanban (see [Modes](#modes) for what it needs).
 
 ## Install and run
@@ -31,15 +31,16 @@ That serves the router in fixture mode. The desktop half is **opt-in** and stays
 
     scripts/install_gate.sh file://$PWD
 
-This installs the plugin into a throwaway `HERMES_HOME`, starts a dashboard with no API keys, and checks the
-snapshot, an authenticated command, the event feed and the plugin listing, then cleans up. It prints `ALL GREEN` only if
-every check passed. It covers the router only and does not exercise the pane.
+This installs the plugin into a throwaway `HERMES_HOME`, starts a dashboard with `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY` unset (the rest of your environment is inherited; the fixture makes no
+model call), and checks the snapshot, an authenticated command, the event feed and the plugin listing, then cleans up.
+It prints `ALL GREEN` only if every check passed. It covers the router only and does not exercise the pane.
 
 ### Modes
 
 | Mode | How to select | What you get |
 | --- | --- | --- |
-| Fixture (default) | nothing to set | 3 projects, 40 cards, 4 workers; one worker loops and one card is blocked on a human. A state machine, no model, no credentials. Every command works. The pane shows a `simulated` badge. |
+| Fixture (default) | nothing to set | 3 projects, 40 cards, 4 workers; one worker loops and one card is blocked on a human. A state machine: no model call, and it reads no credentials. Every command works. The pane shows a `simulated` badge. |
 | Replay | `FOUNDRY_REPLAY=1` (or a path to a recording); optional `FOUNDRY_REPLAY_STEP_SECONDS`, default 2 | The bundled recorded session (`foundry_core/session.json`) plays on the wall clock, one step per interval. Only `reset` is accepted; everything else is refused. Still badged `simulated`. Regenerate with `scripts/record_session.py` (`--check` verifies it is current). |
 | Live | `FOUNDRY_MODE=live`; optional `FOUNDRY_BOARDS` (board slugs, live only) | Reads the real Hermes kanban. Needs a Hermes that has `hermes_cli.kanban_db_boards` and `kanban_db_connect`. Without them the router answers 503 "kanban source unavailable". `FOUNDRY_MODE=live` together with a nonempty `FOUNDRY_REPLAY` is an error. |
 
@@ -116,29 +117,45 @@ result is the same `{ok, error?, simulated}` JSON.
 
 ## Develop and test
 
-    cd desktop && npm ci && npx tsc --noEmit && npx vitest run     # pane: typecheck and unit tests (jsdom)
-    python -m pytest -q                                            # router, sources, tools, install gate
+Pane (typecheck and unit tests, jsdom). The parentheses keep your shell at the repo root:
 
-The Python tests that exercise live mode need a Hermes that has the kanban modules (point `FOUNDRY_HERMES_SRC`, a
-test-only variable, at a Hermes checkout); without one they skip. Design notes are in `docs/contract.md` (the API
-contract, still a draft) and `docs/plan.md`.
+    (cd desktop && npm ci && npx tsc --noEmit && npx vitest run)
+
+Python (router, sources, tools, install gate). The repo pins no Python dependencies (no requirements file or
+`pyproject.toml`); the tests need `pytest`, `fastapi` and `httpx`. In a clean virtualenv at the repo root:
+
+    python3 -m venv .venv && .venv/bin/pip install pytest fastapi httpx
+    .venv/bin/python -m pytest -q
+
+On a clean virtualenv with exactly those three packages this gave 262 passed, 31 skipped, with no Hermes installed
+(2026-11-06). The skips are the live-mode tests, which need a Hermes
+that has the kanban modules; point `FOUNDRY_HERMES_SRC` (a test-only variable) at such a Hermes checkout to run them.
+The install-gate tests need `bash` and `curl`. Design notes are in `docs/contract.md` (the API contract, still a draft)
+and `docs/plan.md`.
 
 ## Performance
 
-Measured in headless Chromium with software WebGL (SwiftShader), the pane ran at about 29 to 48 frames per second
-(48 at 108 cards on an idle host, 29 at 5 cards on a busy one). It has not been measured on a real GPU, and Hermes
-itself turns GPU acceleration off for a remote Browser-hosted Desktop.
+These are observations from the maintainers' hand runs in November 2026, not reproducible from this checkout (no
+benchmark harness or recorded measurements are committed): in headless Chromium with software WebGL (SwiftShader) the
+pane ran at roughly 29 to 48 frames per second, depending on card count and how busy the host was. Nothing has been
+measured on a real GPU.
 
 ## Known limits
 
-- **Real WebGL and GPU are untested.** The pane has only run on software WebGL in headless Chromium.
-- **Live mode needs a newer Hermes.** Hermes 0.16.0 (2026.6.5) lacks the kanban modules, so live mode answers 503 there.
-  The live code is covered by tests against Hermes main at 90d6b98f (2026-11-05); it has not been run end to end through
-  a real dispatcher with a worker picking up an assigned card.
-- **The pane inside a real Hermes Desktop is not exercised by the install gate.** Pane behaviour is tested in jsdom and
-  headless Chromium. The desktop half is opt-in and, on some builds, only reachable through the browser-storage setting above.
+What the tests cover is stated apart from what was run by hand (hand runs were done in November 2026 and leave no
+receipt in this repository).
+
+- **Real WebGL and GPU are untested.** Nothing has been run on a real GPU; see Performance.
+- **Live mode needs a newer Hermes.** By hand, Hermes 0.16.0 (2026.6.5) lacks the kanban modules, so live mode answers
+  503 there. The live tests (skipped unless `FOUNDRY_HERMES_SRC` points at a Hermes with the kanban modules) were run
+  by hand against Hermes main at commit 90d6b98f (2026-11-05) and passed. Live mode has not been run end to end
+  through a real dispatcher with a worker picking up an assigned card.
+- **The pane inside a real Hermes Desktop is not exercised by the install gate.** The unit tests cover the pane in
+  jsdom; separate hand runs drove it in headless Chromium. The desktop half is opt-in and, on some builds, only
+  reachable through the browser-storage setting above.
 - **No per-worker transcript, message or pause in live mode.** Stock Hermes has no kanban hook for them, so they are
   fixture-only and labelled `simulated`.
 - **No `looping` state in live mode**, so the slip animation is fixture-only.
-- **Polling, not push.** The pane polls the router (every 1 s on the fixture, 2 s live), so a change made by another client
-  shows up on the next poll.
+- **Polling, not push.** The pane polls the router every 2 s (fixture and live alike), so a change made by another
+  client shows up on the next poll. Only the pane's built-in fallback fixture, used when the router does not answer,
+  polls every 1 s.
