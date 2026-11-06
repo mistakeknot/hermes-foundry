@@ -159,3 +159,7 @@ receipt in this repository).
 - **Polling, not push.** The pane polls the router every 2 s (fixture and live alike), so a change made by another
   client shows up on the next poll. Only the pane's built-in fallback fixture, used when the router does not answer,
   polls every 1 s.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
