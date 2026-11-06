@@ -32,6 +32,9 @@ const btn = (primary = false): Record<string, unknown> => ({
   font: `12px ${sans}`, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
   border: `1px solid ${primary ? C.primary : C.border}`, background: primary ? C.primary : 'transparent', color: primary ? '#1a1a14' : C.fg,
 })
+/** One-click choice: the current value is marked (and ignores clicks, but stays focusable), anything else acts on click. */
+const choiceBtn = (id: string, label: string, current: boolean, onClick: () => unknown, ref?: unknown) =>
+  h('button', { id, ref, key: id, 'aria-pressed': current, onClick: current ? undefined : onClick, style: { ...btn(current), opacity: current ? 0.85 : 1, cursor: current ? 'default' : 'pointer' } }, label)
 const field: Record<string, unknown> = { font: `12px ${sans}`, padding: '5px 8px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg, color: C.fg, minWidth: 0 }
 const chip = (color: string): Record<string, unknown> => ({ display: 'inline-block', padding: '1px 8px', borderRadius: 10, background: color, color: '#16160f', font: `600 11px ${sans}` })
 const sect = (t: string) => h('div', { style: { font: `600 10px ${sans}`, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.muted, margin: '14px 0 6px' } }, t)
@@ -212,26 +215,27 @@ function CardView(p: PanelProps & { card: Card }) {
 
 function CardActions(p: PanelProps & { card: Card; holderName: string | null }) {
   const { card, snap, setPick } = p
-  const [status, setStatus] = useState(card.status_native)
-  const [profile, setProfile] = useState(card.assignee_profile ?? '')
+  const [profile, setProfile] = useState('') // typed only when no profile is known yet (see the Assign section)
   const [text, setText] = useState('')
-  const profileRef = useRef<HTMLInputElement>(null)
-  // a climber dropped on this card: focus the same profile field the Assign button uses, then forget the request
+  const profileRef = useRef<HTMLElement>(null)
+  // a climber dropped on this card: focus the profile picker the Assign buttons live in, then forget the request
   useEffect(() => {
     const r = p.assignReq
     if (!r || r.cardId !== card.id) return
     profileRef.current?.focus()
     p.clearAssignReq()
   }, [p.assignReq, card.id])
-  useEffect(() => { setStatus(card.status_native); setProfile(card.assignee_profile ?? '') }, [card.id, card.status_native, card.assignee_profile])
   const profiles = useMemo(() => {
     const s = new Set<string>(p.simulated ? PROFILES : [])
     snap.projects.forEach((x) => x.cards.forEach((c) => { if (c.assignee_profile) s.add(c.assignee_profile) }))
     return [...s].sort()
   }, [snap, p.simulated])
+  const assign = (name: string) => p.run({ type: 'assign', card_id: card.id, profile: name },
+    // Hermes' dispatcher may start a ready card once it has a profile, so the live notice must not promise it will not
+    p.simulated ? `Assigned to ${name} (does not start work)` : `Assigned to ${name}. Foundry does not claim or start the card; Hermes may start it once assigned.`)
   const comments = p.state.comments.filter((c) => c.card_id === card.id)
   const choices = NATIVE_CHOICES.includes(card.status_native) ? NATIVE_CHOICES : [card.status_native, ...NATIVE_CHOICES]
-  const row = { display: 'flex', gap: 6, marginTop: 6 }
+  const row = { display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }
   return h('div', null,
     backLink(setPick),
     h('div', { style: { font: `600 15px ${sans}`, lineHeight: 1.25 } }, card.title),
@@ -243,15 +247,17 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null }) 
     h('div', { style: { color: C.muted } }, 'Held by: ', h('span', { style: { color: C.fg } }, p.holderName ?? (card.claimed_by ? `${card.claimed_by} (unknown worker)` : 'nobody'))),
     card.docs.length ? sect('Carvings') : null,
     ...card.docs.map((d) => h('div', { key: d.path, style: { padding: '2px 0', cursor: 'pointer', color: C.primary }, onClick: () => setPick({ kind: 'doc', cardId: card.id, path: d.path, title: d.title }) }, `▫ ${d.title}`)),
-    sect('Move'),
-    h('div', { style: row },
-      h('select', { id: 'foundry-status', style: { ...field, flex: 1 }, value: status, onChange: (e: any) => setStatus(e.target.value) }, ...choices.map((n) => h('option', { key: n, value: n }, n))),
-      h('button', { id: 'foundry-status-apply', style: btn(true), disabled: status === card.status_native, onClick: () => p.run({ type: 'set_status', card_id: card.id, status_native: status }, `Moved to ${status}`) }, 'Set status')),
+    sect('Move to'),
+    h('div', { style: row, role: 'group', 'aria-label': 'Set status' },
+      ...choices.map((n) => choiceBtn(`foundry-status-${n}`, n, n === card.status_native, () => p.run({ type: 'set_status', card_id: card.id, status_native: n }, `Moved to ${n}`)))),
     sect('Assign profile'),
-    h('div', { style: row },
-      h('input', { id: 'foundry-profile', ref: profileRef, list: 'foundry-profiles', style: { ...field, flex: 1 }, value: profile, placeholder: 'profile', onChange: (e: any) => setProfile(e.target.value) }),
-      h('datalist', { id: 'foundry-profiles' }, ...profiles.map((n) => h('option', { key: n, value: n }))),
-      h('button', { id: 'foundry-assign', style: btn(true), disabled: !profile.trim() || profile === card.assignee_profile, onClick: () => p.run({ type: 'assign', card_id: card.id, profile: profile.trim() }, `Assigned to ${profile.trim()} (does not start work)`) }, 'Assign')),
+    profiles.length
+      ? h('div', { style: row, role: 'group', 'aria-label': 'Assign profile' },
+        ...profiles.map((n, i) => choiceBtn(i === 0 ? 'foundry-profile' : `foundry-profile-${n}`, n, n === card.assignee_profile, () => assign(n), i === 0 ? profileRef : undefined)))
+      // no profile is known yet (a live board with nothing assigned): the name has to be typed once
+      : h('div', { style: row },
+        h('input', { id: 'foundry-profile', ref: profileRef, style: { ...field, flex: 1 }, value: profile, placeholder: 'profile', onChange: (e: any) => setProfile(e.target.value) }),
+        h('button', { id: 'foundry-assign', style: btn(true), disabled: !profile.trim(), onClick: () => assign(profile.trim()) }, 'Assign')),
     sect('Comment'),
     comments.length ? h('div', null, ...comments.map((c, i) => h('div', { key: i, style: { padding: '3px 0', fontSize: 12 } }, h('b', null, c.author), `: ${c.text}`))) : null,
     h('div', { style: { ...row, flexDirection: 'column' } },

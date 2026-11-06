@@ -87,13 +87,12 @@ async function dragOnto(scene: any, workerId: string, cardId: string) {
   })
 }
 
-/** The Assign button is the only thing allowed to send, and it sends `assign`: proves the spy would see a command. */
+/** Picking a profile is the only thing allowed to send, and it sends `assign`: proves the spy would see a command. */
 async function pressAssign(profile: string) {
-  const input = document.getElementById('foundry-profile') as HTMLInputElement
-  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-  await act(async () => { set.call(input, profile); input.dispatchEvent(new Event('input', { bubbles: true })) })
-  await act(async () => { (document.getElementById('foundry-assign') as HTMLButtonElement).click() })
+  await act(async () => { (document.getElementById(profile === FIRST ? 'foundry-profile' : `foundry-profile-${profile}`) as HTMLButtonElement).click() })
 }
+let FIRST = ''
+const profileButtons = () => Array.from(document.querySelectorAll('[aria-label="Assign profile"] button')) as HTMLButtonElement[]
 
 describe('fixture mode: the real onDrop callback', () => {
   it('opens the profile selector, sends no command, claims nothing', async () => {
@@ -111,8 +110,9 @@ describe('fixture mode: the real onDrop callback', () => {
     expect(spy).toHaveBeenCalledTimes(0)
     expect(document.activeElement?.id).toBe('foundry-profile')
     expect(document.body.textContent).toContain('does not claim')
+    FIRST = profileButtons()[0].textContent!
 
-    // control: the explicit Assign button is what sends, and only `assign`
+    // control: picking a profile is what sends, and only `assign`
     await pressAssign('reviewer')
     expect(spy).toHaveBeenCalledTimes(1)
     expect(spy.mock.calls[0][0]).toMatchObject({ type: 'assign', card_id: card.id, profile: 'reviewer' })
@@ -173,7 +173,8 @@ describe('live mode: the real onDrop callback', () => {
     expect(posts).toEqual([])
     expect(document.activeElement?.id).toBe('foundry-profile')
 
-    // control: the Assign button posts exactly one `assign`
+    FIRST = profileButtons()[0].textContent!
+    // control: picking a profile posts exactly one `assign`
     await pressAssign('reviewer')
     expect(posts).toEqual([{ path: '/command', body: { type: 'assign', card_id: card.id, profile: 'reviewer' } }])
   })
@@ -217,5 +218,99 @@ describe('the slip is drawn only for a worker that reports looping', () => {
     await waitFor(() => !document.getElementById('foundry-simulated') && scene.climbers.size === snap.workers.length, 'the live climbers')
     settle(scene)
     for (let t = 0; t < 12; t += 0.37) for (const r of rollsAt(scene, t).values()) expect(r).toBe(0)
+  })
+})
+
+describe('operating a card: one click picks a status or a profile', () => {
+  const liveRest = (snap: Snapshot, posts: { path: string; body: unknown }[], reply: (body: any) => any = () => ({ ok: true })): Rest => async (path, opts) => {
+    if (opts?.method && opts.method !== 'GET') { posts.push({ path, body: opts.body }); return reply(opts.body) }
+    if (path.startsWith('/snapshot')) return snap
+    if (path.startsWith('/events')) return { v: 1, epoch: snap.epoch, cursor: snap.cursor, events: [], resync: false }
+    throw new Error('unexpected ' + path)
+  }
+  const click = (id: string) => act(async () => { (document.getElementById(id) as HTMLButtonElement).click() })
+  const notice = () => document.getElementById('foundry-notice')?.textContent ?? ''
+  async function openCard(scene: any, snap: Snapshot) {
+    const card = snap.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null && !['review', 'done', 'blocked'].includes(c.status_native))!
+    await dragOnto(scene, snap.workers[0].id, card.id)
+    await waitFor(() => !!document.getElementById('foundry-profile'), 'the card panel')
+    return card
+  }
+
+  it('a status button sends one set_status; the current status sends nothing', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    const posts: { path: string; body: unknown }[] = []
+    const scene = await mount(liveRest(snap, posts))
+    await waitFor(() => !document.getElementById('foundry-simulated') && !!document.querySelector('canvas'), 'the live pane')
+    await tick(60)
+    const card = await openCard(scene, snap)
+    await click(`foundry-status-${card.status_native}`) // the current one: marked, inert
+    expect(posts).toEqual([])
+    expect((document.getElementById(`foundry-status-${card.status_native}`) as HTMLElement).getAttribute('aria-pressed')).toBe('true')
+    await click('foundry-status-blocked')
+    expect(posts).toEqual([{ path: '/command', body: { type: 'set_status', card_id: card.id, status_native: 'blocked' } }])
+    expect(notice()).toBe('Moved to blocked')
+  })
+
+  it('a refused done shows its reason at once, as an error', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    const reason = 'completion blocked: b:t1 has no result or summary evidence, and Foundry cannot write one.'
+    const posts: { path: string; body: unknown }[] = []
+    const scene = await mount(liveRest(snap, posts, () => ({ ok: false, error: reason })))
+    await waitFor(() => !document.getElementById('foundry-simulated') && !!document.querySelector('canvas'), 'the live pane')
+    await tick(60)
+    await openCard(scene, snap)
+    const t0 = Date.now()
+    await click('foundry-status-done')
+    expect(Date.now() - t0).toBeLessThan(2000) // not the 8 s ack timeout
+    expect(notice()).toBe(reason)
+    expect((document.getElementById('foundry-notice') as HTMLElement).style.border).toContain('solid')
+  })
+
+  it('a profile button sends one assign; live wording says Hermes may start it; the current profile sends nothing', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    const posts: { path: string; body: unknown }[] = []
+    const scene = await mount(liveRest(snap, posts))
+    await waitFor(() => !document.getElementById('foundry-simulated') && !!document.querySelector('canvas'), 'the live pane')
+    await tick(60)
+    const card = await openCard(scene, snap)
+    const names = profileButtons().map((b) => b.textContent!)
+    expect(names.length).toBeGreaterThan(0)
+    const current = profileButtons().find((b) => b.getAttribute('aria-pressed') === 'true')
+    if (current) { await act(async () => current.click()); expect(posts).toEqual([]) }
+    const other = profileButtons().find((b) => b.getAttribute('aria-pressed') !== 'true')!
+    await act(async () => other.click())
+    expect(posts).toEqual([{ path: '/command', body: { type: 'assign', card_id: card.id, profile: other.textContent } }])
+    expect(notice()).toContain('does not claim or start the card')
+    expect(notice()).toContain('Hermes may start it once assigned')
+  })
+
+  it('fixture mode keeps its own wording', async () => {
+    const scene = await mount(() => Promise.reject(new Error('no router')))
+    await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+    const fx = await new MockApi(Date.now, 3_600_000).snapshot()
+    const card = fx.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
+    await dragOnto(scene, fx.workers[0].id, card.id)
+    await waitFor(() => !!document.getElementById('foundry-profile'), 'the card panel')
+    await act(async () => profileButtons().find((b) => b.getAttribute('aria-pressed') !== 'true')!.click())
+    expect(notice()).toContain('(does not start work)')
+  })
+
+  it('with no profile known on a live board, the typed field and Assign button remain', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    snap.projects = snap.projects.map((p) => ({ ...p, cards: p.cards.map((c) => ({ ...c, assignee_profile: null })) }))
+    const posts: { path: string; body: unknown }[] = []
+    const scene = await mount(liveRest(snap, posts))
+    await waitFor(() => !document.getElementById('foundry-simulated') && !!document.querySelector('canvas'), 'the live pane')
+    await tick(60)
+    const card = await openCard(scene, snap)
+    const input = document.getElementById('foundry-profile') as HTMLInputElement
+    expect(input.tagName).toBe('INPUT')
+    expect((document.getElementById('foundry-assign') as HTMLButtonElement).disabled).toBe(true)
+    expect(posts).toEqual([])
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => { setter.call(input, 'coder'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+    await click('foundry-assign')
+    expect(posts).toEqual([{ path: '/command', body: { type: 'assign', card_id: card.id, profile: 'coder' } }])
   })
 })
