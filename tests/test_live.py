@@ -1,7 +1,8 @@
 """Live source against a real kanban DB in a temp HERMES_HOME. No API key, no network, no model.
 
 Needs a Hermes with the kanban boards and workflow modules (main @ b524c8a4 or later). Point FOUNDRY_HERMES_SRC at
-such a checkout if the interpreter's own hermes_cli is older; otherwise the tests skip.
+such a checkout if the interpreter's own hermes_cli is older. With FOUNDRY_HERMES_SRC set an import failure FAILS
+the tests (a configured source that cannot be used is an error, not a skip); with it unset the tests skip.
 """
 
 import importlib
@@ -22,7 +23,9 @@ def _need_kanban():
                   "hermes_cli.kanban_workflow"):
             importlib.import_module(m)
     except ImportError as exc:
-        pytest.skip(f"newer kanban modules not importable: {exc}")
+        if src:
+            pytest.fail(f"FOUNDRY_HERMES_SRC={src} is set but the kanban modules do not import: {exc!r}")
+        pytest.skip(f"newer kanban modules not importable (set FOUNDRY_HERMES_SRC to a newer Hermes): {exc}")
 
 
 @pytest.fixture
@@ -190,6 +193,74 @@ def test_old_epoch_and_future_cursor_resync(kb, src):
 def test_epoch_differs_per_instance(kb):
     from foundry_core.live import LiveSource
     assert LiveSource(min_interval=0).epoch != LiveSource(min_interval=0).epoch
+
+
+def test_read_in_an_empty_home_creates_nothing(tmp_path, monkeypatch):
+    _need_kanban()
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    from foundry_core.live import LiveSource
+    s = LiveSource(min_interval=0)
+    snap = s.snapshot()
+    assert snap["projects"] == [] and snap["workers"] == []
+    assert s.events(snap["cursor"])["resync"] is False
+    assert list(tmp_path.iterdir()) == []  # no kanban.db, no init lock, nothing
+
+
+def test_read_leaves_an_existing_database_untouched(kb, tmp_path):
+    from foundry_core.live import LiveSource
+    _mk(kb, "atlas", "x")
+    before = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    LiveSource(min_interval=0).snapshot()
+    after = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    new = [p.name for p in after if p not in before]
+    assert all(n.endswith(("-shm", "-wal")) for n in new), new  # at most SQLite's own WAL sidecars; no lock, no new DB
+    db = next(p for p in before if p.name == "kanban.db" and p.parent.name == "atlas")
+    assert before[db] == after[db]  # the main database file is not written
+
+
+def test_board_with_metadata_but_no_database_is_absent_and_not_created(kb, tmp_path):
+    from foundry_core.live import LiveSource
+    importlib.import_module("hermes_cli.kanban_db_boards").write_board_metadata("nodb", name="No DB")
+    s = LiveSource(min_interval=0)
+    assert "nodb" not in [p["id"] for p in s.snapshot()["projects"]]
+    r = s.command({"type": "comment", "card_id": "nodb:t_1", "text": "x"})
+    assert r["ok"] is False and "no database" in r["error"]
+    assert not (tmp_path / "kanban" / "boards" / "nodb" / "kanban.db").exists()
+
+
+@pytest.mark.parametrize("bad", [["Atlas"], ["atlas", "atlas"], ["../../etc"], ["a/b"], [""], ["atlas", "ATLAS"], ["-x"], ["a" * 65]])
+def test_malformed_board_filters_are_rejected_before_any_use(kb, bad):
+    from foundry_core.live import LiveSource
+    with pytest.raises(ValueError):
+        LiveSource(boards=bad)
+
+
+def test_from_env_board_filter_validation(kb):
+    from foundry_core.live import LiveSource
+    assert [p["id"] for p in LiveSource.from_env({"FOUNDRY_BOARDS": "atlas"}).snapshot()["projects"]] == ["atlas"]
+    for bad in ("Atlas", "atlas,atlas", "ghost", "atlas,ghost", "../x"):
+        with pytest.raises(ValueError):
+            LiveSource.from_env({"FOUNDRY_BOARDS": bad})
+
+
+def test_filtered_unknown_and_uppercase_boards_never_reach_connect(kb):
+    from foundry_core.live import LiveSource
+    s = LiveSource(boards=["atlas"], min_interval=0)
+    t = _mk(kb, "atlas", "ok")
+    h = _mk(kb, "harbor", "no")
+    calls = []
+    real = s._connect
+    s._connect = lambda **kw: (calls.append(kw), real(**kw))[1]
+    for cid in (f"harbor:{h}", "ghost:t_1", f"ATLAS:{t}", "Atlas:t_1", "../../etc:t_1", "a/b:t_1", "atlas/..:t_1"):
+        r = s.command({"type": "comment", "card_id": cid, "text": "x"})
+        assert r["ok"] is False, cid
+    assert calls == []  # not one of them opened a connection
+    assert s.command({"type": "comment", "card_id": f"atlas:{t}", "text": "x"}) == {"ok": True}
+    assert calls == [{"board": "atlas"}]
+    # a filtered name that is not a board is simply absent from reads (and never opened)
+    ghost = LiveSource(boards=["ghost"], min_interval=0)
+    ghost._open_ro = lambda slug: pytest.fail(f"opened {slug}")
+    assert ghost.snapshot()["projects"] == []
 
 
 def test_board_filter(kb):

@@ -14,6 +14,11 @@ The kanban stays the source of truth. Nothing is stored here except a diff basel
     with our own ``seq``; the epoch is new for every process, so a restart makes clients resync. A change the events
     cannot express (a board appears or disappears or is renamed) bumps ``seq`` and raises the resync floor.
 
+Reads open each board's existing database read-only (sqlite ``mode=ro``, bounded busy wait): they never initialise,
+migrate, repair or create anything, and a board without a database is simply absent. Board names (from
+``FOUNDRY_BOARDS`` or a card id) must be canonical lowercase slugs that Hermes lists, before any path is formed.
+Commands write through Hermes's own functions, and only to a listed board that already has a database.
+
 The module imports ``hermes_cli`` lazily, so importing it on a Hermes without the kanban modules raises at
 ``from_env`` and ``make_source`` reports that instead of faking live data.
 """
@@ -24,7 +29,9 @@ import collections
 import copy
 import importlib
 import importlib.util
+import re
 import secrets
+import sqlite3
 import sys
 import threading
 import time
@@ -38,6 +45,22 @@ STATUS_DISPLAY = {"triage": "open", "todo": "open", "scheduled": "open", "ready"
                   "running": "running", "blocked": "blocked", "review": "review", "done": "done"}
 LOG_LIMIT = 2000
 COMMENT_AUTHOR = "foundry"
+READ_BUSY_MS = 2000  # a read waits at most this long for a writer; then it raises instead of hanging the poll
+BOARD_SLUG = re.compile(r"^[a-z0-9][a-z0-9\-_]{0,63}$")  # Hermes's canonical board slug: lowercase, no path characters
+
+
+def parse_boards(raw: list[str] | None) -> list[str] | None:
+    """Validate a FOUNDRY_BOARDS list: canonical lowercase slugs, no duplicates. Raises ValueError otherwise."""
+    if raw is None:
+        return None
+    seen: set[str] = set()
+    for name in raw:
+        if not isinstance(name, str) or not BOARD_SLUG.match(name):
+            raise ValueError(f"invalid board name {name!r}: use the lowercase board slug (a-z, 0-9, '-', '_')")
+        if name in seen:
+            raise ValueError(f"duplicate board name {name!r}")
+        seen.add(name)
+    return list(raw)
 
 
 def _rfc3339(epoch: int | float | None) -> str:
@@ -52,7 +75,7 @@ class LiveSource:
         self._connect = importlib.import_module("hermes_cli.kanban_db_connect").connect
         self._boards_mod = importlib.import_module("hermes_cli.kanban_db_boards")
         self._workflow = importlib.import_module("hermes_cli.kanban_workflow").DEFAULT_WORKFLOW
-        self._only = boards
+        self._only = parse_boards(boards)
         self._min = min_interval
         self._lock = threading.RLock()
         self.epoch = "live-" + secrets.token_hex(4)
@@ -68,6 +91,9 @@ class LiveSource:
         raw = (env.get("FOUNDRY_BOARDS") or "").strip()
         boards = [b.strip() for b in raw.split(",") if b.strip()] or None
         src = cls(boards=boards)
+        missing = [b for b in (boards or []) if b not in src._discovered()]
+        if missing:
+            raise ValueError(f"FOUNDRY_BOARDS names no such board: {', '.join(missing)}")
         src.snapshot()  # fail now, not on the first poll, if the kanban cannot be read
         return src
 
@@ -107,6 +133,8 @@ class LiveSource:
                 return {"ok": False, "error": "card_id must be '<board>:<task>'"}
             if board not in self._slugs():  # only a real, listed board ever reaches connect(): no path-shaped names
                 return {"ok": False, "error": f"unknown board: {board}"}
+            if not self._kb.kanban_db_path(board=board).is_file():  # connect() would create it; a command never does
+                return {"ok": False, "error": f"board has no database: {board}"}
             conn = self._connect(board=board)
             try:
                 if self._kb.get_task(conn, task_id) is None:
@@ -216,10 +244,37 @@ class LiveSource:
     def _shape(model: dict[str, Any]) -> list[tuple[str, str]]:
         return [(p["id"], p["name"]) for p in model["projects"]]
 
+    def _discovered(self) -> list[str]:
+        """Non-archived boards Hermes lists, canonical slugs only. Nothing outside this list is ever opened."""
+        return [b["slug"] for b in self._boards_mod.list_boards(include_archived=False)
+                if isinstance(b.get("slug"), str) and BOARD_SLUG.match(b["slug"])]
+
     def _slugs(self) -> list[str]:
-        if self._only is not None:
-            return list(self._only)
-        return [b["slug"] for b in self._boards_mod.list_boards(include_archived=False)]
+        found = self._discovered()
+        if self._only is None:
+            return found
+        return [s for s in found if s in self._only]  # a filtered name that is not (or no longer) a board is absent
+
+    def _open_ro(self, slug: str) -> sqlite3.Connection | None:
+        """Open an existing board DB read-only: no schema init, migration, repair or lock file, bounded wait.
+        None when the board has no database yet (or no kanban schema), so a read never creates anything."""
+        path = self._kb.kanban_db_path(board=slug)
+        if not path.is_file():
+            return None
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=READ_BUSY_MS / 1000.0)
+        try:
+            conn.row_factory = sqlite3.Row
+            lossy = getattr(self._kb, "_lossy_text", None)
+            if lossy is not None:
+                conn.text_factory = lossy
+            conn.execute(f"PRAGMA busy_timeout={READ_BUSY_MS}")
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone() is None:
+                conn.close()
+                return None
+        except BaseException:
+            conn.close()
+            raise
+        return conn
 
     def _read(self) -> tuple[dict[str, Any], dict[str, tuple[int, list[tuple[str, str, str]]]]]:
         """(model, {board: (max comment id, [(task_id, author, text) newer than the last seen])})."""
@@ -227,7 +282,9 @@ class LiveSource:
         comments: dict[str, tuple[int, list[tuple[str, str, str]]]] = {}
         now = time.time()
         for slug in self._slugs():
-            conn = self._connect(board=slug)
+            conn = self._open_ro(slug)
+            if conn is None:
+                continue
             try:
                 tasks = self._kb.list_tasks(conn, include_archived=False, order_by=None)
                 touched = {r[0]: r[1] for r in conn.execute(
