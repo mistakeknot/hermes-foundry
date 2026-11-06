@@ -25,3 +25,19 @@ Hermes marks the copy in `desktop-plugins/foundry` as not enabled by default, so
 hidden until the user turns it on under Capabilities > Plugins. Nothing in this repo can change that default.
 Hermes copies the whole `desktop/` directory into `desktop-plugins/foundry`; only `plugin.js` is used at runtime.
 `scripts/install_gate.sh` checks the router only and does not exercise the pane.
+
+## Agent tools
+
+The plugin registers three Hermes agent tools (toolset `foundry`). Each result is JSON `{ok, error?, simulated}`.
+
+- `foundry_assign{card_id, profile}`: **live**. Assigns a profile to a kanban card (`'<board>:<task>'`) through Hermes'
+  `assign_task`. It assigns only; it never claims or starts the card.
+- `foundry_stand{on}`: **fixture only, simulated**. Pauses or resumes the fixture. Stock Hermes has no equivalent, so
+  against the live kanban it answers `ok: false` ("fixture only").
+- `foundry_message{worker_id, text}`: **fixture only, simulated**. Stock Hermes cannot address a kanban worker (a
+  separate process with no session key), so against the live kanban it answers `ok: false` ("fixture only"). It is
+  not wired to `inject_message`, which only reaches chat sessions.
+
+`simulated` is `true` whenever the answer came from the fixture, not the live board. The tool process holds its own
+source: in live mode that is the shared kanban database, so an assignment shows in the pane; in fixture mode the
+state is private to the tool process and is not the pane's fixture.
