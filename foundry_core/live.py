@@ -105,7 +105,7 @@ class LiveSource:
             board, _, task_id = card_id.partition(":") if isinstance(card_id, str) else ("", "", "")
             if not board or not task_id:
                 return {"ok": False, "error": "card_id must be '<board>:<task>'"}
-            if self._only is not None and board not in self._only:
+            if board not in self._slugs():  # only a real, listed board ever reaches connect(): no path-shaped names
                 return {"ok": False, "error": f"unknown board: {board}"}
             conn = self._connect(board=board)
             try:

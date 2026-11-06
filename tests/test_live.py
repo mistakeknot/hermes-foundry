@@ -150,6 +150,8 @@ def test_command_errors_are_ok_false(kb, src):
         {"type": "assign", "card_id": "nocolon", "profile": "x"},
         {"type": "assign", "card_id": "atlas:t_missing", "profile": "x"},
         {"type": "assign", "card_id": "ghost:t_1", "profile": "x"},
+        {"type": "assign", "card_id": "../../etc:t_1", "profile": "x"},  # path-shaped board names never reach connect()
+        {"type": "assign", "card_id": "a/b:t_1", "profile": "x"},
         {"type": "claim", "card_id": cid, "worker_id": "w"},
         {"type": "nope"},
     ):
