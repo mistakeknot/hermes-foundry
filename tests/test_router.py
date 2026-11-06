@@ -102,3 +102,20 @@ def test_garbage_cursor_over_http_is_resync(client):
     for since in ("e.²", "x." + "9" * 5000):
         r = client.get("/api/plugins/foundry/events", params={"since": since})
         assert r.status_code == 200 and r.json()["resync"] is True
+
+
+def test_replay_over_http(monkeypatch):
+    monkeypatch.setenv("FOUNDRY_REPLAY", "1")
+    monkeypatch.setenv("FOUNDRY_REPLAY_STEP_SECONDS", "0")
+    spec = importlib.util.spec_from_file_location("hermes_dashboard_plugin_foundry_replay", API)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    app = FastAPI()
+    app.include_router(mod.router, prefix="/api/plugins/foundry")
+    c = TestClient(app)
+    snap = c.get("/api/plugins/foundry/snapshot").json()
+    assert snap["mode"] == "fixture" and snap["last_seq"] > 0  # step 0 s: the whole recording is already played
+    assert c.post("/api/plugins/foundry/command", json={"type": "stand", "on": True}).json()["ok"] is False
+    assert c.post("/api/plugins/foundry/command", json={"type": "reset"}).json() == {"ok": True}
+    assert c.get("/api/plugins/foundry/events", params={"since": snap["cursor"], "epoch": snap["epoch"]}).json()["resync"] is True
+    assert c.get("/api/plugins/foundry/transcript", params={"worker_id": "fx:3"}).status_code == 200
