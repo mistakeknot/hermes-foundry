@@ -282,7 +282,7 @@ function WorkerView(p: PanelProps & { worker: Worker }) {
       h('div', { style: { font: `600 15px ${sans}` } }, worker.name)),
     h('div', { style: { color: C.muted, marginTop: 6 } }, 'State: ', h('span', { style: { color: C.fg } }, worker.state === 'unknown' ? 'unknown (the source cannot tell)' : worker.state.replace('_', ' '))),
     h('div', { style: { color: C.muted } }, 'Holds: ', held ? h('a', { style: { color: C.primary, cursor: 'pointer' }, onClick: () => setPick({ kind: 'card', id: held.id }) }, held.title) : h('span', { style: { color: C.fg } }, 'nothing')),
-    worker.state === 'looping' ? h('div', { style: { marginTop: 8, color: '#ff9fc4' } }, 'Going in circles on one segment.') : null,
+    worker.state === 'looping' ? h('div', { style: { marginTop: 8, color: '#ff9fc4' } }, p.simulated ? 'Keeps slipping on one segment and catching a new hold (simulated: the fixture scripts this).' : 'Keeps slipping on one segment and catching a new hold.') : null,
     p.simulated ? h('div', null,
       sect('Simulated controls'),
       h('div', { style: { display: 'flex', gap: 6 } },

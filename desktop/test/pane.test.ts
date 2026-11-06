@@ -165,3 +165,44 @@ describe('live mode: the real onDrop callback', () => {
     expect(posts).toEqual([{ path: '/command', body: { type: 'assign', card_id: card.id, profile: 'reviewer' } }])
   })
 })
+
+describe('the slip is drawn only for a worker that reports looping', () => {
+  const settle = (scene: any) => { for (let i = 0; i < 40; i++) scene.animateClimbers(i, 1) } // let every climber arrive
+  const rollsAt = (scene: any, t: number) => {
+    scene.animateClimbers(t, 0)
+    return new Map<string, number>([...scene.climbers.values()].map((c: any) => [c.id, c.mesh.rotation.z]))
+  }
+  const slipTimes = (phase: number) => { // a time inside the slide and one inside the struggle, for this climber
+    const base = -phase / (2 * Math.PI) * 4
+    return { slide: base + 4 * 0.84, struggle: base + 4 * 0.3 }
+  }
+
+  it('fixture: the one looping climber tips while slipping and sits level while struggling; the rest never tip', async () => {
+    const scene = await mount(() => Promise.reject(new Error('no router')))
+    await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+    await tick(60)
+    settle(scene)
+    const looping = [...scene.climbers.values()].filter((c: any) => c.worker.state === 'looping')
+    expect(looping).toHaveLength(1)
+    const lp = looping[0] as any
+    const { slide, struggle } = slipTimes(lp.phase)
+    const slid = rollsAt(scene, slide), still = rollsAt(scene, struggle)
+    expect(Math.abs(slid.get(lp.id)!)).toBeGreaterThan(0.5)
+    expect(still.get(lp.id)).toBe(0)
+    for (const c of scene.climbers.values() as any) if (c.id !== lp.id) { expect(slid.get(c.id)).toBe(0); expect(still.get(c.id)).toBe(0) }
+  })
+
+  it('live: climbers the source reports as working or unknown never slip, at any time', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    snap.workers = snap.workers.map((w, i) => ({ ...w, state: i % 2 ? 'unknown' : 'working' }))
+    const rest: Rest = async (path) => {
+      if (path.startsWith('/snapshot')) return snap
+      if (path.startsWith('/events')) return { v: 1, epoch: snap.epoch, cursor: snap.cursor, events: [], resync: false }
+      throw new Error('unexpected ' + path)
+    }
+    const scene = await mount(rest)
+    await waitFor(() => !document.getElementById('foundry-simulated') && scene.climbers.size === snap.workers.length, 'the live climbers')
+    settle(scene)
+    for (let t = 0; t < 12; t += 0.37) for (const r of rollsAt(scene, t).values()) expect(r).toBe(0)
+  })
+})
