@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyReply, applySnapshot, instantOf, recomputeWorkers } from '../src/reducer'
+import { applyReply, applySnapshot, claimedWithoutClimber, instantOf, recomputeWorkers } from '../src/reducer'
 import { MockApi, buildFixture } from '../src/mock'
 import type { Card, Snapshot } from '../src/types'
 
@@ -30,14 +30,33 @@ describe('ownership compares UTC instants, then the greatest card id', () => {
     expect(holder([{ id: 'main:t1', at: a }, { id: 'main:t9', at: b }])).toBe('main:t9')
     expect(holder([{ id: 'main:t9', at: c }, { id: 'main:t1', at: a }])).toBe('main:t9')
   })
+  it('sub-millisecond precision decides before the id (Date.parse would tie these)', () => {
+    expect(holder([{ id: 'main:t9', at: '2026-11-07T09:00:00.000100Z' }, { id: 'main:t1', at: '2026-11-07T09:00:00.000900Z' }])).toBe('main:t1')
+    expect(holder([{ id: 'main:t1', at: '2026-11-07T09:00:00.000900Z' }, { id: 'main:t9', at: '2026-11-07T09:00:00.000100Z' }])).toBe('main:t1')
+    expect(holder([{ id: 'main:t9', at: '2026-11-07T09:00:00.123456788Z' }, { id: 'main:t1', at: '2026-11-07T09:00:00.123456789+00:00' }])).toBe('main:t1')
+    // same instant with trailing zeros and another offset still ties, then the greatest id
+    expect(holder([{ id: 'main:t1', at: '2026-11-07T11:00:00.000900+02:00' }, { id: 'main:t9', at: '2026-11-07T09:00:00.0009Z' }])).toBe('main:t9')
+  })
   it('a newer card with a smaller id beats an older card with a greater id', () => {
     expect(holder([{ id: 'main:t9', at: '2026-11-07T09:00:00Z' }, { id: 'main:t1', at: '2026-11-07T09:00:01Z' }])).toBe('main:t1')
   })
   it('an offset-less or unparseable timestamp counts as oldest', () => {
-    expect(instantOf('2026-11-07T09:00:00')).toBe(-Infinity)
-    expect(instantOf('not a time')).toBe(-Infinity)
-    expect(instantOf('2026-11-07T09:00:00Z')).toBeGreaterThan(-Infinity)
+    expect(instantOf('2026-11-07T09:00:00')).toBeNull()
+    expect(instantOf('not a time')).toBeNull()
+    expect(instantOf('2026-11-07T09:00:00Z')).not.toBeNull()
     expect(holder([{ id: 'main:t9', at: '2026-11-07T23:00:00' }, { id: 'main:t1', at: '2026-11-07T00:00:00Z' }])).toBe('main:t1')
+  })
+})
+
+describe('claimedWithoutClimber', () => {
+  const card = (id: string, claimed_by: string | null) => ({ id, claimed_by } as never)
+  const w = (id: string, card_id: string | null) => ({ id, card_id } as never)
+  it('marks a secondary claim, not the climbed card, not a missing worker, not an unclaimed card', () => {
+    const workers = [w('fx:1', 'main:t1')]
+    expect(claimedWithoutClimber(card('main:t2', 'fx:1'), workers)).toBe(true)
+    expect(claimedWithoutClimber(card('main:t1', 'fx:1'), workers)).toBe(false)
+    expect(claimedWithoutClimber(card('main:t3', 'fx:gone'), workers)).toBe(false)
+    expect(claimedWithoutClimber(card('main:t4', null), workers)).toBe(false)
   })
 })
 

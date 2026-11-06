@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildCreature, frameAt, layoutCreatures, type CreatureSpec, type LimbSpec, type Material, type V3 } from './creature'
 import { hashString, rng } from './rng'
+import { claimedWithoutClimber } from './reducer'
 import type { Card, Project, Snapshot, Worker } from './types'
 
 export const STATUS_COLOR: Record<Card['status'], number> = {
@@ -41,6 +42,7 @@ interface CreatureView {
   group: THREE.Group
   center: THREE.Vector3
   scales: THREE.InstancedMesh
+  claims: THREE.InstancedMesh // ring over each scale whose card is claimed by a worker that is not climbing it
   scaleIds: string[]
   scaleBase: THREE.Matrix4[]
   bands: THREE.Group // aggregate status bands per limb (zoomed-out view)
@@ -183,8 +185,8 @@ export class FoundryScene {
         v = this.makeCreature(spec, key, new THREE.Vector3(...spots[i]))
         this.creatures.set(spec.projectId, v)
       }
-      v.group.position.set(...spots[i])
-      this.recolor(v, proj.cards)
+      moveCreature(v, new THREE.Vector3(...spots[i]))
+      this.recolor(v, proj.cards, snap.workers)
     })
     for (const [id, v] of this.creatures) if (!seen.has(id)) { this.disposeCreature(v); this.creatures.delete(id) }
     this.updateBeacons(snap)
@@ -297,6 +299,15 @@ export class FoundryScene {
     }
     scales.userData = { kind: 'scales', project: spec.projectId }
     group.add(scales)
+    // claim rings: one slot per scale, shown only for a claim without a climber on the card
+    const ringGeo = new THREE.TorusGeometry(0.62, 0.07, 6, 16)
+    ringGeo.rotateX(Math.PI / 2)
+    ringGeo.translate(0, 0.2, 0)
+    const claims = new THREE.InstancedMesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xf2c14e }), Math.max(allScales.length, 1))
+    claims.count = allScales.length
+    claims.userData = { kind: 'claims', project: spec.projectId }
+    claims.raycast = () => {} // a marker, not a pick target: clicks fall through to the scale
+    group.add(claims)
     // carvings: three glyph shapes, instanced, darker inset into the limb
     const glyphGeos = [new THREE.TorusGeometry(0.5, 0.12, 5, 10), new THREE.BoxGeometry(0.9, 0.16, 0.16), new THREE.OctahedronGeometry(0.5)]
     const carvingMeshes: THREE.InstancedMesh[] = []
@@ -318,18 +329,21 @@ export class FoundryScene {
       group.add(im)
       carvingMeshes.push(im); carvingInfo.push(info)
     })
-    return { spec, key, group, center, scales, scaleIds, scaleBase, bands, carvingMeshes, carvingInfo, torso, labels, cardPos, limbOf }
+    return { spec, key, group, center, scales, claims, scaleIds, scaleBase, bands, carvingMeshes, carvingInfo, torso, labels, cardPos, limbOf }
   }
 
-  private recolor(v: CreatureView, cards: Card[]) {
+  private recolor(v: CreatureView, cards: Card[], workers: Worker[]) {
     const byId = new Map(cards.map((c) => [c.id, c]))
     const col = new THREE.Color()
+    const hidden = new THREE.Matrix4().makeScale(0, 0, 0)
     v.scaleIds.forEach((id, i) => {
       const c = byId.get(id)
       col.setHex(STATUS_COLOR[c?.status ?? 'unknown'])
       v.scales.setColorAt(i, col)
+      v.claims.setMatrixAt(i, c && claimedWithoutClimber(c, workers) ? v.scaleBase[i] : hidden)
     })
     if (v.scales.instanceColor) v.scales.instanceColor.needsUpdate = true
+    v.claims.instanceMatrix.needsUpdate = true
   }
 
   private disposeCreature(v: CreatureView) {
@@ -516,6 +530,7 @@ export class FoundryScene {
       const dist = this.camera.position.distanceTo(v.center)
       const on = showScales(this.totalCards, dist, v.spec.radius)
       v.scales.visible = on
+      v.claims.visible = on
       v.bands.visible = !on
     }
     this.renderer.render(this.scene, this.camera)
@@ -563,6 +578,20 @@ export class FoundryScene {
 }
 
 // ---------------- geometry helpers ----------------
+/**
+ * Move a cached creature and every world-space coordinate derived from its centre (labels, card
+ * positions, centre itself), so climbers, beacons and the selection ring stay on their cards.
+ */
+type Movable = { center: THREE.Vector3; group: THREE.Object3D; labels: { world: THREE.Vector3 }[]; cardPos: Map<string, THREE.Vector3> }
+export function moveCreature(v: Movable, to: THREE.Vector3) {
+  const d = to.clone().sub(v.center)
+  if (d.lengthSq() === 0) return
+  v.center.copy(to)
+  v.group.position.copy(to)
+  for (const l of v.labels) l.world.add(d)
+  for (const p of v.cardPos.values()) p.add(d)
+}
+
 /** Cache key for a creature: changes whenever anything its cached spec, labels or bands show changes. */
 export function creatureKey(p: Project): string {
   return JSON.stringify([

@@ -8,21 +8,40 @@ export function applySnapshot(snap: Snapshot, prev?: PaneState | null): PaneStat
   return { snap: recomputeWorkers(s), watermark: s.last_seq, cursor: s.cursor, epoch: s.epoch, comments }
 }
 
+const RFC3339 = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}:\d{2})(?::(\d{2})(?:\.(\d+))?)?([Zz]|[+-]\d{2}:?\d{2})$/
+
 /**
- * Parse an RFC 3339 timestamp to epoch milliseconds. A string without an explicit offset (or that
- * does not parse) is unparseable and ranks oldest, so it never wins an ownership comparison.
+ * Parse an RFC 3339 timestamp to a UTC instant in integer nanoseconds (BigInt), keeping up to nine
+ * fraction digits (Date.parse would truncate to milliseconds). A string without an explicit offset, or
+ * that does not parse, returns null and ranks oldest, so it never wins an ownership comparison.
  */
-export function instantOf(ts: string | null | undefined): number {
-  if (typeof ts !== 'string' || !/^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?([Zz]|[+-]\d{2}:?\d{2})$/.test(ts)) return -Infinity
-  const ms = Date.parse(ts.replace(' ', 'T'))
-  return Number.isNaN(ms) ? -Infinity : ms
+export function instantOf(ts: string | null | undefined): bigint | null {
+  if (typeof ts !== 'string') return null
+  const m = RFC3339.exec(ts)
+  if (!m) return null
+  const [, date, hm, sec, frac, zone] = m
+  // whole seconds through Date.parse (offset handling), the fraction kept as a digit string
+  const whole = Date.parse(`${date}T${hm}:${sec ?? '00'}${zone.length === 5 && !zone.includes(':') && zone !== 'Z' ? zone.slice(0, 3) + ':' + zone.slice(3) : zone}`)
+  if (Number.isNaN(whole)) return null
+  const nanos = BigInt((frac ?? '').slice(0, 9).padEnd(9, '0'))
+  return BigInt(whole) * 1_000_000n + nanos
 }
 
 /** True when card a outranks card b for ownership: later UTC instant, then the greater card id. */
 export function outranks(a: Card, b: Card): boolean {
   const ta = instantOf(a.updated_at)
   const tb = instantOf(b.updated_at)
-  return ta > tb || (ta === tb && a.id > b.id)
+  if (ta === tb) return a.id > b.id // includes both unparseable
+  if (ta === null) return false
+  if (tb === null) return true
+  return ta > tb
+}
+
+/** A card whose claimed_by names a known worker that is not climbing this card: drawn as claimed, without a climber. */
+export function claimedWithoutClimber(card: Card, workers: Worker[]): boolean {
+  if (!card.claimed_by) return false
+  const w = workers.find((x) => x.id === card.claimed_by)
+  return !!w && w.card_id !== card.id
 }
 
 /**

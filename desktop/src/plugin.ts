@@ -3,6 +3,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ROUTES_AREA, SIDEBAR_NAV_AREA } from '@hermes/plugin-sdk'
 import { FoundryScene, STATUS_COLOR, WORKER_COLOR, type Pick } from './scene'
+import { loadUnlessCancelled } from './stale'
 import { HttpApi, probeRouter, type Rest } from './http'
 import { MockApi, PROFILES } from './mock'
 import { startSync, type SyncHandle } from './sync'
@@ -246,7 +247,10 @@ function WorkerView(p: PanelProps & { worker: Worker }) {
   const [msg, setMsg] = useState('')
   useEffect(() => {
     setTr(null)
-    if (p.api.transcript) p.api.transcript(worker.id).then(setTr).catch(() => setTr(null))
+    const load = p.api.transcript
+    if (!load) return
+    // a reply for a previously selected worker must never show under this one
+    return loadUnlessCancelled(() => load.call(p.api, worker.id), setTr)
   }, [worker.id])
   const held = worker.card_id ? findCard(snap, worker.card_id) : undefined
   return h('div', null, backLink(setPick),
