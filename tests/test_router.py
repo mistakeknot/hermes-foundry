@@ -26,19 +26,25 @@ def test_snapshot_default_is_fixture(client):
     r = client.get("/api/plugins/foundry/snapshot")
     assert r.status_code == 200
     body = r.json()
-    assert body["mode"] == "fixture" and body["v"] == 1 and body["cursor"] == "fx.0"
+    assert body["mode"] == "fixture" and body["v"] == 1
+    assert body["last_seq"] == 0 and body["cursor"] == f"{body['epoch']}.0"
 
 
 def test_command_then_events_roundtrip(client):
-    r = client.post("/api/plugins/foundry/command", json={"type": "assign", "card_id": "c04", "worker_id": "w4"})
+    snap = client.get("/api/plugins/foundry/snapshot").json()
+    r = client.post("/api/plugins/foundry/command", json={"type": "assign", "card_id": "atlas:t04", "profile": "writer"})
     assert r.json() == {"ok": True}
-    feed = client.get("/api/plugins/foundry/events", params={"since": "fx.0"}).json()
-    assert feed["resync"] is False and feed["events"][0]["type"] == "card_assigned"
-    assert feed["cursor"] == f"fx.{feed['events'][-1]['seq']}"
+    feed = client.get("/api/plugins/foundry/events", params={"since": snap["cursor"], "epoch": snap["epoch"]}).json()
+    assert feed["resync"] is False and feed["epoch"] == snap["epoch"]
+    assert feed["events"][0]["type"] == "card_upsert"
+    assert feed["events"][0]["payload"]["card"]["assignee_profile"] == "writer"
+    assert feed["cursor"] == f"{snap['epoch']}.{feed['events'][-1]['seq']}"
+    stale = client.get("/api/plugins/foundry/events", params={"since": snap["cursor"], "epoch": "old"}).json()
+    assert stale["resync"] is True
 
 
 def test_failed_command_is_http_200_ok_false(client):
-    r = client.post("/api/plugins/foundry/command", json={"type": "assign", "card_id": "zz", "worker_id": "w1"})
+    r = client.post("/api/plugins/foundry/command", json={"type": "assign", "card_id": "zz", "profile": "coder"})
     assert r.status_code == 200 and r.json()["ok"] is False and "zz" in r.json()["error"]
     r = client.post("/api/plugins/foundry/command", json=["not", "an", "object"])
     assert r.status_code == 200 and r.json()["ok"] is False
@@ -53,3 +59,19 @@ def test_reset_over_http(client):
     client.post("/api/plugins/foundry/command", json={"type": "stand", "on": True})
     assert client.post("/api/plugins/foundry/command", json={"type": "reset"}).json() == {"ok": True}
     assert client.get("/api/plugins/foundry/snapshot").json()["paused"] is False
+
+
+def test_fixture_only_command_goes_through_in_fixture_mode(client):
+    r = client.post("/api/plugins/foundry/command", json={"type": "stand", "on": True})
+    assert r.json() == {"ok": True}
+
+
+def test_transcript_route(client):
+    r = client.get("/api/plugins/foundry/transcript", params={"worker_id": "fx:3", "limit": 3})
+    assert r.status_code == 200
+    body = r.json()
+    assert [ln["seq"] for ln in body["lines"]] == [5, 6, 7] and body["next_before"] == 5 and body["truncated"] is True
+    older = client.get("/api/plugins/foundry/transcript",
+                       params={"worker_id": "fx:3", "limit": 3, "before": body["next_before"]}).json()
+    assert [ln["seq"] for ln in older["lines"]] == [2, 3, 4]
+    assert client.get("/api/plugins/foundry/transcript", params={"worker_id": "nope"}).status_code == 404
