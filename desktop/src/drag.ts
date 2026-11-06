@@ -1,7 +1,7 @@
 // Drag-a-climber-onto-a-scale gesture: the decision logic, kept free of three.js and React so it is easy to test.
 //
-// The only thing a drop can do is ask the pane to open the card and focus its profile selector, the same one the
-// Assign button uses. A drop never produces a Command: a worker exposes no profile (so none is inferred from it),
+// The only thing a drop can do is ask the pane to open the card and focus its profile selector, the same picker
+// the profile buttons use. A drop never produces a Command: a worker exposes no profile (so none is inferred from it),
 // and nothing here claims the card. Dropping anywhere that is not a scale is a no-op.
 import { findCard } from './reducer'
 import type { Pick } from './scene'
@@ -40,7 +40,7 @@ export interface DropUi {
 }
 
 /** The pane's whole response to a drop. It returns UI state only (no Command), so a drop cannot claim or assign.
- *  The assignment itself happens only when the user presses Assign in the selector, which sends `assign`. */
+ *  The assignment itself happens only when the user picks a profile in the selector, which sends `assign`. */
 export function dropUi(req: AssignRequest, snap: Snapshot): DropUi | null {
   const card = findCard(snap, req.cardId)
   if (!card) return null // the card vanished between press and drop
@@ -48,6 +48,6 @@ export function dropUi(req: AssignRequest, snap: Snapshot): DropUi | null {
   return {
     pick: { kind: 'card', id: card.id },
     request: req,
-    notice: `Choose a profile for “${card.title}”, then press Assign. Dropping ${w?.name ?? 'a climber'} here does not claim it.`,
+    notice: `Choose a profile for “${card.title}”. Dropping ${w?.name ?? 'a climber'} here does not claim it.`,
   }
 }

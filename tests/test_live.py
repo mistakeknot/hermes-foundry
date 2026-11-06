@@ -113,7 +113,7 @@ def test_claim_makes_worker_and_converges(kb, src):
     assert to_snapshot(state)["workers"] == []
 
 
-def test_commands_assign_comment_status(kb, src):
+def test_commands_assign_comment_status(kb, src, monkeypatch):
     t = _mk(kb, "atlas", "Cmd")
     cid = f"atlas:{t}"
     state = apply_snapshot(src.snapshot())
@@ -136,6 +136,17 @@ def test_commands_assign_comment_status(kb, src):
     # the stock PATCH enforces its own rules: completing needs a result, so the workflow's reason comes back
     blocked = src.command({"type": "set_status", "card_id": cid, "status_native": "done"})
     assert blocked["ok"] is False and "result" in blocked["error"]
+    # the refusal is decided from a read: it never reaches the stock router, whose own refusal takes a write lock first
+    reached: list[int] = []
+
+    def _no_router():
+        reached.append(1)
+        raise AssertionError("router reached")
+    with monkeypatch.context() as m:
+        m.setattr(type(src), "_kanban_router", staticmethod(_no_router))
+        again = src.command({"type": "set_status", "card_id": cid, "status_native": "done"})
+    assert again["ok"] is False and "no result or summary evidence" in again["error"] and "Foundry cannot write one" in again["error"]
+    assert reached == []
     assert src.command({"type": "set_status", "card_id": cid, "status_native": "blocked"}) == {"ok": True}
     state, cursor = _converge(src, state, cursor)
     card = next(c for p in to_snapshot(state)["projects"] for c in p["cards"] if c["id"] == cid)
