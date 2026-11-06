@@ -39,7 +39,7 @@ def make_source(env: dict[str, str] | None = None) -> Any:
         path = None if replay.lower() in ("1", "true", "yes", "bundled") else replay
         try:
             return ReplaySource(load(path), step_seconds=step, epoch_prefix="rp" + secrets.token_hex(3))
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, ArithmeticError, RecursionError) as exc:
             raise RuntimeError(f"FOUNDRY_REPLAY recording unusable: {exc}") from exc
     # A restart loses the fixture state, so each process gets its own epoch prefix.
     return FixtureSource(epoch_prefix="fx" + secrets.token_hex(3))

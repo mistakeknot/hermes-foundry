@@ -195,6 +195,14 @@ def _header_only(r):
         r.pop(k, None)
 
 
+def _first_card(r):
+    return r["base"]["snapshot"]["projects"][0]["cards"][0]
+
+
+def _first_upsert(r):
+    return next(e for st in r["steps"] for e in st["events"] if e["type"] == "card_upsert")
+
+
 def _bad_payload(r):
     r["steps"][0]["events"][0]["payload"] = {}
 
@@ -217,13 +225,13 @@ def _unknown_type(r):
 
 
 def _bad_ref(r):
-    r["steps"][3]["events"][0] = {"seq": r["steps"][3]["events"][0]["seq"], "type": "card_upsert",
-                                  "payload": {"card": {"id": "ghost:t1"}}}
+    ev = r["steps"][3]["events"][0]  # a well-formed card on a board that does not exist: the reducer asks for a resync
+    ev["payload"] = {"card": dict(_first_card(r), id="ghost:t1", epic_id=None)}
 
 
 def _comment_on_ghost(r):
-    r["steps"][1]["events"][-1] = {"seq": r["steps"][1]["events"][-1]["seq"], "type": "comment_added",
-                                   "payload": {"card_id": "ghost:t1"}}
+    ev = r["steps"][1]["events"][-1]
+    ev["type"], ev["payload"] = "comment_added", {"card_id": "ghost:t1", "author": "you", "text": "hi"}
 
 
 def _no_steps_key(r):
@@ -263,12 +271,107 @@ def _step_transcript_not_a_list(r):
     r["steps"][2]["transcript"]["fx:3"] = {"seq": 9}
 
 
+# -- contract schema (draft 4): required fields on cards, workers and every event payload --------------------
+def _thin_card(r):
+    _first_upsert(r)["payload"]["card"] = {"id": "atlas:t04"}
+
+
+def _card_bad_status(r):
+    _first_upsert(r)["payload"]["card"]["status"] = "sideways"
+
+
+def _card_no_title(r):
+    del _first_upsert(r)["payload"]["card"]["title"]
+
+
+def _card_wrong_board(r):
+    _first_upsert(r)["payload"]["card"]["id"] = "zz:t1"
+
+
+def _card_bad_docs(r):
+    _first_upsert(r)["payload"]["card"]["docs"] = [{"path": 1}]
+
+
+def _card_blocked_on_other(r):
+    _first_upsert(r)["payload"]["card"]["blocked_on"] = "robot"
+
+
+def _card_unknown_epic(r):
+    _first_upsert(r)["payload"]["card"]["epic_id"] = "atlas:e99"
+
+
+def _thin_base_card(r):
+    r["base"]["snapshot"]["projects"][0]["cards"][0] = {"id": "atlas:t01"}
+
+
+def _base_duplicate_card(r):
+    cards = r["base"]["snapshot"]["projects"][0]["cards"]
+    cards.append(copy.deepcopy(cards[0]))
+
+
+def _base_no_mode(r):
+    del r["base"]["snapshot"]["mode"]
+
+
+def _base_paused_string(r):
+    r["base"]["snapshot"]["paused"] = "no"
+
+
+def _base_worker_thin(r):
+    r["base"]["snapshot"]["workers"][0] = {"id": "fx:1"}
+
+
+def _worker_event_bad_state(r):
+    ev = next(e for st in r["steps"] for e in st["events"] if e["type"] == "worker_upsert")
+    ev["payload"]["worker"]["state"] = "dancing"
+
+
+def _paused_not_bool(r):
+    ev = next(e for st in r["steps"] for e in st["events"] if e["type"] == "paused")
+    ev["payload"]["paused"] = 1
+
+
+def _event_no_ts(r):
+    del r["steps"][0]["events"][0]["ts"]
+
+
+def _event_seq_beyond_cursor_range(r):
+    r["steps"][-1]["events"][-1]["seq"] = 10 ** 15
+
+
+def _transcript_bad_role(r):
+    r["base"]["transcripts"]["fx:3"][0]["role"] = "wizard"
+
+
+# -- timestamps and numbers that overflow --------------------------------------------------------------------
+def _claimed_card_year_one(r):
+    card = _first_upsert(r)["payload"]["card"]
+    card["claimed_by"] = r["base"]["snapshot"]["workers"][0]["id"]
+    card["updated_at"] = "0001-01-01T00:00:00+01:00"
+
+
+def _stamp_year_nine_thousand_far_offset(r):
+    _first_upsert(r)["payload"]["card"]["updated_at"] = "9999-12-31T23:59:59-23:59"
+
+
+def _stamp_not_a_stamp(r):
+    _first_upsert(r)["payload"]["card"]["updated_at"] = "yesterday"
+
+
+def _stamp_no_offset(r):
+    _first_upsert(r)["payload"]["card"]["updated_at"] = "2026-11-06T00:00:00"
+
+
+def _event_ts_overflows(r):
+    r["steps"][0]["events"][0]["ts"] = "0001-01-01T00:00:00+01:00"
+
+
 BAD_RECORDINGS = {
     "header-only": (_header_only, "base"),
     "missing-base": (_del_base, "base"),
     "missing-steps": (_no_steps_key, "steps"),
     "bad-step-shape": (_bad_step_shape, "step 0"),
-    "bad-event-payload": (_bad_payload, "does not apply"),
+    "bad-event-payload": (_bad_payload, "card"),
     "payload-not-a-dict": (_bad_payload_type, "payload"),
     "out-of-order-seq": (_out_of_order, "not above"),
     "duplicate-seq": (_dup_seq_within_step, "not above"),
@@ -282,6 +385,28 @@ BAD_RECORDINGS = {
     "transcript-out-of-order": (_transcript_out_of_order, "transcript seq"),
     "step-transcript-reuses-a-seq": (_step_transcript_reuses_seq, "transcript seq"),
     "step-transcript-not-a-list": (_step_transcript_not_a_list, "list"),
+    "thin-card-in-an-upsert": (_thin_card, "needs a string title"),
+    "card-bad-status": (_card_bad_status, "status must be"),
+    "card-without-title": (_card_no_title, "string title"),
+    "card-on-another-board": (_card_wrong_board, "not in project|does not apply"),
+    "card-bad-docs": (_card_bad_docs, "docs"),
+    "card-blocked-on-something-else": (_card_blocked_on_other, "blocked_on"),
+    "card-in-an-unknown-epic": (_card_unknown_epic, "does not apply"),
+    "thin-card-in-the-base": (_thin_base_card, "string title"),
+    "duplicate-card-in-the-base": (_base_duplicate_card, "duplicate id"),
+    "base-without-mode": (_base_no_mode, "mode"),
+    "base-paused-not-a-bool": (_base_paused_string, "paused"),
+    "thin-worker-in-the-base": (_base_worker_thin, "string name"),
+    "worker-event-bad-state": (_worker_event_bad_state, "state must be"),
+    "paused-event-not-a-bool": (_paused_not_bool, "boolean paused"),
+    "event-without-ts": (_event_no_ts, "ts"),
+    "event-seq-beyond-the-cursor-range": (_event_seq_beyond_cursor_range, "above"),
+    "transcript-bad-role": (_transcript_bad_role, "role"),
+    "claimed-card-dated-year-one": (_claimed_card_year_one, "RFC3339"),
+    "stamp-overflows-at-the-far-end": (_stamp_year_nine_thousand_far_offset, "RFC3339"),
+    "stamp-is-not-a-stamp": (_stamp_not_a_stamp, "RFC3339"),
+    "stamp-has-no-offset": (_stamp_no_offset, "RFC3339"),
+    "event-ts-overflows": (_event_ts_overflows, "RFC3339"),
 }
 
 
@@ -340,3 +465,70 @@ def test_replay_source_refuses_a_bad_pace(rec, step):
 def test_make_source_refuses_a_bad_pace(step):
     with pytest.raises(RuntimeError, match="FOUNDRY_REPLAY_STEP_SECONDS must be a finite number above 0"):
         make_source({"FOUNDRY_REPLAY": "1", "FOUNDRY_REPLAY_STEP_SECONDS": step})
+
+
+# -- playback arithmetic -------------------------------------------------------------------------------------
+@pytest.mark.parametrize("step", [5e-324, 1e-320, 1e-300, 1e-200, 1e-9])
+def test_a_tiny_but_valid_pace_plays_to_the_end_without_overflow(rec, step):
+    clock = Clock()
+    rp = ReplaySource(rec, step_seconds=step, clock=clock)
+    assert rp.snapshot()["last_seq"] == 0  # no time has passed yet
+    clock.t += 1.0  # a second is an enormous number of steps at this pace
+    assert rp.snapshot()["last_seq"] == sum(len(s["events"]) for s in rec["steps"])
+    assert rp.events(None)["resync"] is True
+    assert rp.finished
+
+
+@pytest.mark.parametrize("step", [1e300, 1e308, 1.7976931348623157e308])
+def test_a_huge_pace_never_releases_a_step_and_never_overflows(rec, step):
+    clock = Clock()
+    rp = ReplaySource(rec, step_seconds=step, clock=clock)
+    clock.t += 1e6
+    assert rp.snapshot()["last_seq"] == 0
+    assert not rp.finished
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), -50.0])
+def test_a_broken_or_backwards_clock_releases_nothing_and_does_not_raise(rec, bad):
+    clock = Clock()
+    rp = ReplaySource(rec, step_seconds=1.0, clock=clock)
+    clock.t = bad
+    assert rp.snapshot()["last_seq"] == 0
+    assert rp.events(None)["resync"] is True
+    assert not rp.finished
+
+
+def test_the_clock_going_backwards_after_progress_keeps_what_was_released(rec):
+    clock = Clock()
+    rp = ReplaySource(rec, step_seconds=1.0, clock=clock)
+    clock.t += 2.5
+    seq = rp.snapshot()["last_seq"]
+    assert seq > 0
+    clock.t -= 100
+    assert rp.snapshot()["last_seq"] == seq
+
+
+def test_a_year_one_claim_is_a_503_over_http_not_an_uncaught_overflow(rec, tmp_path):
+    bad = _mut(rec, _claimed_card_year_one)
+    path = _write(tmp_path, bad)
+    with pytest.raises(RuntimeError, match="unusable.*RFC3339"):
+        make_source({"FOUNDRY_REPLAY": str(path)})
+
+
+def test_a_thin_card_in_an_upsert_is_refused_before_the_reducer_sees_it(rec, tmp_path):
+    bad = _mut(rec, _thin_card)
+    with pytest.raises(ValueError, match="needs a string title"):
+        validate_recording(bad)
+    with pytest.raises(RuntimeError, match="unusable"):
+        make_source({"FOUNDRY_REPLAY": str(_write(tmp_path, bad))})
+
+
+def test_a_reducer_overflow_is_normalised_even_if_the_schema_checks_miss_it(rec, monkeypatch):
+    import foundry_core.recording as mod
+
+    def boom(state, events):
+        raise OverflowError("timestamp out of range for platform time_t")
+
+    monkeypatch.setattr(mod, "apply_events", boom)
+    with pytest.raises(ValueError, match="does not replay: OverflowError"):
+        validate_recording(copy.deepcopy(rec))

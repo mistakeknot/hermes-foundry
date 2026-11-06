@@ -18,11 +18,12 @@ import copy
 import json
 import math
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from .fixture import FixtureSource, page_transcript
-from .reducer import EVENT_TYPES, apply_events, apply_snapshot, make_cursor, parse_cursor, to_snapshot
+from .reducer import CARD_STATUSES, EVENT_TYPES, WORKER_STATES, apply_events, apply_snapshot, make_cursor, parse_cursor, to_snapshot
 
 BUNDLED = Path(__file__).resolve().parent / "session.json"
 RECORDING_VERSION = 1
@@ -73,6 +74,126 @@ def _int(v: Any) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+MAX_SEQ = 10 ** 15 - 1  # parse_cursor accepts at most 15 digits; a larger seq would make every cursor unreadable
+TRANSCRIPT_ROLES = ("user", "assistant", "tool")
+
+
+def _str_or_none(v: Any) -> bool:
+    return v is None or isinstance(v, str)
+
+
+def _check_stamp(where: str, v: Any) -> None:
+    """RFC3339 with an offset that converts to a UTC instant (0001-01-01T00:00:00+01:00 does not)."""
+    try:
+        if not isinstance(v, str):
+            raise ValueError("not a string")
+        dt = datetime.fromisoformat(v.strip().replace("Z", "+00:00").replace("z", "+00:00"))
+        if dt.tzinfo is None:
+            raise ValueError("no offset")
+        when = dt.astimezone(timezone.utc).timestamp()
+        if not math.isfinite(when):
+            raise ValueError("not finite")
+    except (ValueError, OverflowError, OSError) as exc:
+        raise ValueError(f"{where}: {v!r} is not an RFC3339 timestamp with an offset in a usable range") from exc
+
+
+def _check_card(where: str, card: Any, board: str | None = None) -> None:
+    """A full contract card (draft 4). ``board``, when given, is the project the card must belong to."""
+    if not isinstance(card, dict):
+        raise ValueError(f"{where}: a card must be an object")
+    for key in ("id", "title", "status_native", "updated_at"):
+        if not isinstance(card.get(key), str):
+            raise ValueError(f"{where}: card needs a string {key}")
+    cid = card["id"]
+    if ":" not in cid or not cid.partition(":")[0] or not cid.partition(":")[2]:
+        raise ValueError(f"{where}: card id {cid!r} is not '<board>:<id>'")
+    if board is not None and cid.partition(":")[0] != board:
+        raise ValueError(f"{where}: card id {cid!r} is not in project {board!r}")
+    if card.get("status") not in CARD_STATUSES:
+        raise ValueError(f"{where}: card status must be one of {', '.join(CARD_STATUSES)}")
+    for key in ("epic_id", "assignee_profile", "claimed_by"):
+        if key not in card or not _str_or_none(card[key]):
+            raise ValueError(f"{where}: card {key} must be a string or null")
+    if card.get("blocked_on") not in (None, "human"):
+        raise ValueError(f"{where}: card blocked_on must be 'human' or null")
+    docs = card.get("docs")
+    if not isinstance(docs, list) or not all(isinstance(d, dict) and isinstance(d.get("path"), str)
+                                             and isinstance(d.get("title"), str) for d in docs):
+        raise ValueError(f"{where}: card docs must be a list of objects with a string path and title")
+    _check_stamp(f"{where}.updated_at", card["updated_at"])
+
+
+def _check_worker(where: str, w: Any) -> None:
+    """A full contract worker (draft 4)."""
+    if not isinstance(w, dict):
+        raise ValueError(f"{where}: a worker must be an object")
+    for key in ("id", "name"):
+        if not isinstance(w.get(key), str):
+            raise ValueError(f"{where}: worker needs a string {key}")
+    if w.get("state") not in WORKER_STATES:
+        raise ValueError(f"{where}: worker state must be one of {', '.join(WORKER_STATES)}")
+    if "card_id" not in w or not _str_or_none(w["card_id"]):
+        raise ValueError(f"{where}: worker card_id must be a string or null")
+
+
+def _check_payload(where: str, etype: str, payload: dict[str, Any]) -> None:
+    """The payload each event type carries (draft 4 events table)."""
+    if etype == "card_upsert":
+        _check_card(f"{where} payload.card", payload.get("card"))
+    elif etype == "worker_upsert":
+        _check_worker(f"{where} payload.worker", payload.get("worker"))
+    elif etype == "card_removed":
+        if not isinstance(payload.get("card_id"), str):
+            raise ValueError(f"{where}: card_removed needs a string card_id")
+    elif etype == "worker_removed":
+        if not isinstance(payload.get("worker_id"), str):
+            raise ValueError(f"{where}: worker_removed needs a string worker_id")
+    elif etype == "comment_added":
+        if not all(isinstance(payload.get(k), str) for k in ("card_id", "author", "text")):
+            raise ValueError(f"{where}: comment_added needs a string card_id, author and text")
+    elif etype == "paused":
+        if not isinstance(payload.get("paused"), bool):
+            raise ValueError(f"{where}: paused needs a boolean paused")
+
+
+def _check_base_snapshot(snap: dict[str, Any]) -> None:
+    """The recording's first snapshot: contract shape, unique ids, cards in their own project and epic."""
+    if snap.get("v") != 1 or snap.get("mode") != "fixture" or not isinstance(snap.get("paused"), bool):
+        raise ValueError('recording base snapshot needs v 1, mode "fixture" and a boolean paused')
+    for key in ("projects", "workers"):
+        if not isinstance(snap.get(key), list):
+            raise ValueError(f"recording base snapshot has no {key} list")
+    seen: set[str] = set()
+
+    def fresh(where: str, ident: str) -> None:
+        if ident in seen:
+            raise ValueError(f"{where}: duplicate id {ident!r}")
+        seen.add(ident)
+
+    for pi, proj in enumerate(snap["projects"]):
+        where = f"base snapshot projects[{pi}]"
+        if not isinstance(proj, dict) or not isinstance(proj.get("id"), str) or not proj["id"] or ":" in proj["id"] \
+                or not isinstance(proj.get("name"), str) or not isinstance(proj.get("cards"), list) \
+                or not isinstance(proj.get("epics"), list):
+            raise ValueError(f"{where} needs a board-slug id (no ':'), a string name, an epics list and a cards list")
+        fresh(where, proj["id"])
+        epics: set[str] = set()
+        for ei, ep in enumerate(proj["epics"]):
+            if not isinstance(ep, dict) or not isinstance(ep.get("id"), str) or not isinstance(ep.get("title"), str):
+                raise ValueError(f"{where}.epics[{ei}] needs a string id and title")
+            fresh(f"{where}.epics[{ei}]", ep["id"])
+            epics.add(ep["id"])
+        for ci, card in enumerate(proj["cards"]):
+            cwhere = f"{where}.cards[{ci}]"
+            _check_card(cwhere, card, board=proj["id"])
+            fresh(cwhere, card["id"])
+            if card["epic_id"] is not None and card["epic_id"] not in epics:
+                raise ValueError(f"{cwhere}: epic_id {card['epic_id']!r} is not an epic of {proj['id']!r}")
+    for wi, w in enumerate(snap["workers"]):
+        _check_worker(f"base snapshot workers[{wi}]", w)
+        fresh(f"base snapshot workers[{wi}]", w["id"])
+
+
 def _check_lines(where: str, lines: Any, last: int) -> int:
     """Transcript lines: dicts with an int ``seq`` strictly ascending above ``last``. Returns the new last seq."""
     if not isinstance(lines, list):
@@ -81,6 +202,10 @@ def _check_lines(where: str, lines: Any, last: int) -> int:
         if not isinstance(ln, dict) or not _int(ln.get("seq")) or not isinstance(ln.get("text"), str) \
                 or not isinstance(ln.get("role"), str):
             raise ValueError(f"{where}[{i}]: a transcript line needs an int seq and string role and text")
+        if ln["role"] not in TRANSCRIPT_ROLES:
+            raise ValueError(f"{where}[{i}]: transcript role must be one of {', '.join(TRANSCRIPT_ROLES)}")
+        if ln["seq"] > MAX_SEQ:
+            raise ValueError(f"{where}[{i}]: transcript seq {ln['seq']} is above {MAX_SEQ}")
         if ln["seq"] <= last:
             raise ValueError(f"{where}[{i}]: transcript seq {ln['seq']} is not above {last}")
         last = ln["seq"]
@@ -101,18 +226,7 @@ def validate_recording(rec: Any) -> None:
     snap, transcripts = base.get("snapshot"), base.get("transcripts")
     if not isinstance(snap, dict):
         raise ValueError("recording base has no snapshot")
-    for key in ("projects", "workers"):
-        if not isinstance(snap.get(key), list):
-            raise ValueError(f"recording base snapshot has no {key} list")
-    for pi, proj in enumerate(snap["projects"]):
-        if not isinstance(proj, dict) or not isinstance(proj.get("id"), str) or not isinstance(proj.get("cards"), list):
-            raise ValueError(f"base snapshot projects[{pi}] needs a string id and a cards list")
-        for ci, card in enumerate(proj["cards"]):
-            if not isinstance(card, dict) or not isinstance(card.get("id"), str):
-                raise ValueError(f"base snapshot projects[{pi}].cards[{ci}] needs a string id")
-    for wi, w in enumerate(snap["workers"]):
-        if not isinstance(w, dict) or not isinstance(w.get("id"), str):
-            raise ValueError(f"base snapshot workers[{wi}] needs a string id")
+    _check_base_snapshot(snap)
     if not isinstance(transcripts, dict):
         raise ValueError("recording base has no transcripts dict")
     last_line: dict[str, int] = {}
@@ -131,6 +245,10 @@ def validate_recording(rec: Any) -> None:
             if not isinstance(ev, dict) or not _int(ev.get("seq")) or ev.get("type") not in EVENT_TYPES \
                     or not isinstance(ev.get("payload"), dict):
                 raise ValueError(f"{where}: needs an int seq, a known type and a payload dict")
+            if ev["seq"] > MAX_SEQ:
+                raise ValueError(f"{where}: seq {ev['seq']} is above {MAX_SEQ}")
+            _check_stamp(f"{where}.ts", ev.get("ts"))
+            _check_payload(where, ev["type"], ev["payload"])
             if ev["seq"] <= watermark:
                 raise ValueError(f"{where}: seq {ev['seq']} is not above {watermark} (events must ascend across steps)")
             watermark = ev["seq"]
@@ -148,7 +266,9 @@ def validate_recording(rec: Any) -> None:
             if state["resync"]:
                 raise ValueError(f"step {si} does not apply to the state before it: {step['command']}")
         to_snapshot(state)
-    except (KeyError, TypeError, AttributeError, IndexError) as exc:
+    except ValueError:
+        raise
+    except Exception as exc:  # whatever the reducer trips on (overflow, a bad type) is an unplayable recording
         raise ValueError(f"recording does not replay: {type(exc).__name__}: {exc}") from exc
 
 
@@ -243,7 +363,13 @@ class ReplaySource:
 
     def _advance(self) -> None:
         total = len(self._rec["steps"])
-        due = min(total, max(0, int((self._clock() - self._t0) / self._step_seconds)))
+        elapsed = self._clock() - self._t0
+        if not math.isfinite(elapsed) or elapsed <= 0:  # a stalled, backwards or broken clock releases nothing
+            due = 0
+        elif elapsed >= total * self._step_seconds:  # compare before dividing: a tiny pace would overflow the quotient
+            due = total
+        else:
+            due = min(total, int(elapsed / self._step_seconds))
         while self._applied < due:
             step = self._rec["steps"][self._applied]
             self._state = apply_events(self._state, step["events"])
