@@ -376,3 +376,26 @@ def test_blocked_on_human_only_for_needs_input(kb, src):
     cards = {c["id"]: c for p in src.snapshot()["projects"] for c in p["cards"]}
     assert cards[f"atlas:{a}"]["status"] == "blocked" and cards[f"atlas:{a}"]["blocked_on"] == "human"
     assert cards[f"atlas:{b}"]["status"] == "blocked" and cards[f"atlas:{b}"]["blocked_on"] is None
+
+
+def test_tools_assign_live_and_fixture_only_refused(kb, src):
+    """foundry_assign reaches the real kanban (assign only, never a claim); stand and message are refused as fixture only."""
+    import json
+
+    from foundry_core.tools import FoundryTools
+    t = _mk(kb, "atlas", "Tool target")
+    cid = f"atlas:{t}"
+    tools = FoundryTools(make=lambda: src)
+    assert json.loads(tools.assign({"card_id": cid, "profile": "reviewer"})) == {"ok": True, "simulated": False}
+    conn = kb[1](board="atlas")
+    try:
+        task = kb[0].get_task(conn, t)
+    finally:
+        conn.close()
+    assert task.assignee == "reviewer" and task.status != "running"
+    card = next(c for p in src.snapshot()["projects"] for c in p["cards"] if c["id"] == cid)
+    assert card["assignee_profile"] == "reviewer" and card["claimed_by"] is None
+    missing = json.loads(tools.assign({"card_id": "atlas:nope", "profile": "reviewer"}))
+    assert missing["ok"] is False and "unknown card" in missing["error"]
+    for out in (json.loads(tools.stand({"on": True})), json.loads(tools.message({"worker_id": "atlas:1", "text": "hi"}))):
+        assert out == {"ok": False, "error": out["error"], "simulated": False} and "fixture only" in out["error"]
