@@ -481,13 +481,16 @@ describe('short pane: the Comment box', () => {
       else delete (HTMLElement.prototype as any).clientHeight
     }
   }
-  it('stays pinned to the bottom of the panel in a normal-height pane', async () => {
-    expect((await dockWithPaneHeight(456)).style.position).toBe('sticky')
+  it('stays pinned to the bottom of the panel in a tall pane (a 600 px window and up)', async () => {
+    expect((await dockWithPaneHeight(536)).style.position).toBe('sticky')
+  })
+  it('flows with the card in the 800x520 window (a 456 px pane), so the Assign profile row is not behind it at first glance', async () => {
+    expect((await dockWithPaneHeight(456)).style.position).not.toBe('sticky')
   })
   it('flows with the card in a 420 px pane too (the 560x420 window)', async () => {
     expect((await dockWithPaneHeight(420)).style.position).not.toBe('sticky')
   })
-  it('flows with the card in a pane under 440 px high, so it cannot cover the profile and status rows', async () => {
+  it('flows with the card in a pane under 500 px high, so it cannot cover the profile and status rows', async () => {
     expect((await dockWithPaneHeight(376)).style.position).not.toBe('sticky')
   })
 })
