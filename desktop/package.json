@@ -1,0 +1,19 @@
+{
+  "name": "foundry-desktop-pane",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Foundry desktop half: three.js pane for Hermes. Builds to plugin.js (committed).",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "three": "^0.170.0",
+    "@types/three": "^0.170.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
