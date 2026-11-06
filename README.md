@@ -22,7 +22,17 @@ built from `desktop/src/plugin.ts` only:
 
 `hermes plugins enable foundry` turns on the agent half (the router). The desktop half is opt-in:
 Hermes marks the copy in `desktop-plugins/foundry` as not enabled by default, so the Foundry nav item stays
-hidden until the user turns it on under Capabilities > Plugins. Nothing in this repo can change that default.
+hidden until the user turns it on. Where the build exposes it, turn it on under Capabilities > Plugins. Some
+builds (checked on Hermes b524c8a4) list only the catalog there, with the backend marked "needs setup", and show no
+Foundry entry. The fallback, verified on a fresh install, is the same browser setting the toggle writes: in the
+Webapp's browser storage, set the `foundry` key to `true` in `hermes.desktop.pluginDecisions.v2` and reload. That key
+holds every plugin's decision, so merge into it; do not replace it. In the browser console:
+
+    k = "hermes.desktop.pluginDecisions.v2";
+    localStorage.setItem(k, JSON.stringify({...JSON.parse(localStorage.getItem(k) || "{}"), foundry: true}));
+
+The host copies the desktop half to `desktop-plugins/foundry` on the first Webapp request after the agent half is enabled.
+Nothing in this repo can change that default.
 Hermes copies the whole `desktop/` directory into `desktop-plugins/foundry`; only `plugin.js` is used at runtime.
 `scripts/install_gate.sh` checks the router only and does not exercise the pane.
 
@@ -41,3 +51,13 @@ The plugin registers three Hermes agent tools (toolset `foundry`). Each result i
 `simulated` is `true` whenever the answer came from the fixture, not the live board. The tool process holds its own
 source: in live mode that is the shared kanban database, so an assignment shows in the pane; in fixture mode the
 state is private to the tool process and is not the pane's fixture.
+
+When Hermes tool search defers the plugin's tools (many tools loaded), a model does not see `foundry_assign`
+directly and may reach it through the `tool_call` bridge, naming `foundry_assign` and passing the arguments. The
+result is the same `{ok, error?, simulated}` JSON.
+
+## Performance
+
+Measured in headless Chromium with software WebGL (SwiftShader), the pane ran at about 29 to 48 frames per second
+(48 at 108 cards on an idle host, 29 at 5 cards on a busy one). It has not been measured on a real GPU, and Hermes
+itself turns GPU acceleration off for a remote Browser-hosted Desktop.
