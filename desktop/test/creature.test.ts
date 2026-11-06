@@ -64,3 +64,14 @@ describe('creature builder', () => {
     expect(layoutCreatures(specs).length).toBe(3)
   })
 })
+
+import { showScales, CROWDED } from '../src/scene'
+describe('legibility past ~100 cards', () => {
+  it('always shows scales when the valley is small', () => {
+    expect(showScales(CROWDED, 500, 3)).toBe(true)
+  })
+  it('hides scales at distance and shows them up close once crowded', () => {
+    expect(showScales(CROWDED + 1, 40, 3)).toBe(false)
+    expect(showScales(CROWDED + 1, 5, 3)).toBe(true)
+  })
+})

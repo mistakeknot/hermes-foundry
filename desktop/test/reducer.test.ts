@@ -28,6 +28,35 @@ describe('reducer', () => {
     st = applyEvent(st, ev(2, 'card_upsert', { card: fresh }))!
     expect(findCard(st.snap, 'main:t999')).toBeTruthy()
   })
+  it('two cards for one worker: latest updated_at wins, ties go to the greatest id; others keep claimed_by', () => {
+    const s = buildFixture()
+    const [a, b] = [s.projects[0].cards[0], s.projects[0].cards[1]]
+    for (const c of s.projects[0].cards) if (c.claimed_by === 'fx:4') c.claimed_by = null
+    a.claimed_by = 'fx:4'; b.claimed_by = 'fx:4'
+    a.updated_at = '2026-11-07T10:00:00Z'; b.updated_at = '2026-11-07T09:00:00Z'
+    let st = applySnapshot(s)
+    expect(st.snap.workers.find((w) => w.id === 'fx:4')?.card_id).toBe(a.id)
+    expect(findCard(st.snap, b.id)?.claimed_by).toBe('fx:4')
+    b.updated_at = a.updated_at
+    st = applySnapshot(s)
+    expect(st.snap.workers.find((w) => w.id === 'fx:4')?.card_id).toBe([a.id, b.id].sort().at(-1))
+  })
+  it('a claim naming a missing worker leaves every worker card_id untouched and does not throw', () => {
+    const s = buildFixture()
+    s.projects[0].cards[0].claimed_by = 'ghost'
+    const st = applySnapshot(s)
+    expect(st.snap.workers.some((w) => w.card_id === s.projects[0].cards[0].id)).toBe(false)
+    expect(findCard(st.snap, s.projects[0].cards[0].id)?.claimed_by).toBe('ghost')
+  })
+  it('worker_removed clears claimed_by on every card that names it', () => {
+    let st = base()
+    const held = st.snap.projects.flatMap((p) => p.cards).filter((c) => c.claimed_by === 'fx:1')
+    expect(held.length).toBeGreaterThan(0)
+    st = applyEvent(st, ev(1, 'worker_removed', { worker_id: 'fx:1' }))!
+    expect(st.snap.workers.some((w) => w.id === 'fx:1')).toBe(false)
+    expect(st.snap.projects.flatMap((p) => p.cards).some((c) => c.claimed_by === 'fx:1')).toBe(false)
+    expect(applyEvent(st, ev(2, 'worker_removed', { worker_id: 'fx:1' }))).not.toBeNull() // idempotent
+  })
   it('card_upsert for an unknown board asks for a resync', () => {
     expect(applyEvent(base(), ev(1, 'card_upsert', { card: { ...card(), id: 'nope:t1' } }))).toBeNull()
   })

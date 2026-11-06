@@ -8,9 +8,15 @@ export function applySnapshot(snap: Snapshot): PaneState {
 
 /** claimed_by on a card is the single source; a worker's card_id is derived from it. */
 export function recomputeWorkers(s: Snapshot): Snapshot {
-  const held = new Map<string, string>()
-  for (const p of s.projects) for (const c of p.cards) if (c.claimed_by) held.set(c.claimed_by, c.id)
-  for (const w of s.workers) w.card_id = held.get(w.id) ?? null
+  // claimed_by is the single source (contract draft 4). A worker holds at most one card: the one
+  // with the latest updated_at (ties: the greatest card id). Other claims stay on their cards.
+  const held = new Map<string, Card>()
+  for (const p of s.projects) for (const c of p.cards) {
+    if (!c.claimed_by) continue
+    const cur = held.get(c.claimed_by)
+    if (!cur || c.updated_at > cur.updated_at || (c.updated_at === cur.updated_at && c.id > cur.id)) held.set(c.claimed_by, c)
+  }
+  for (const w of s.workers) w.card_id = held.get(w.id)?.id ?? null
   return s
 }
 
@@ -66,8 +72,8 @@ export function applyEvent(state: PaneState, ev: FoundryEvent): PaneState | null
     }
     case 'worker_removed': {
       const i = snap.workers.findIndex((x) => x.id === ev.payload.worker_id)
-      if (i < 0) return null
-      snap.workers.splice(i, 1)
+      if (i >= 0) snap.workers.splice(i, 1) // removing an absent worker is a no-op (idempotent)
+      for (const p of snap.projects) for (const c of p.cards) if (c.claimed_by === ev.payload.worker_id) c.claimed_by = null
       break
     }
     case 'paused':

@@ -1,4 +1,4 @@
-// Contract draft 3 (docs/contract.md on work/plan-review). Types only.
+// Contract draft 4 (docs/contract.md on work/plan-review). Types only.
 export type CardStatus = 'open' | 'running' | 'blocked' | 'review' | 'done' | 'unknown'
 export type WorkerState = 'working' | 'waiting_human' | 'looping' | 'idle' | 'unknown'
 
@@ -52,6 +52,8 @@ export type Command =
   | { type: 'comment'; card_id: string; text: string }
   | { type: 'claim'; card_id: string; worker_id: string }
   | { type: 'new_worker'; card_id: string }
+  | { type: 'stand'; on: boolean }
+  | { type: 'message'; worker_id: string; text: string }
   | { type: 'reset' }
 export type CommandReply = { ok: boolean; error?: string }
 

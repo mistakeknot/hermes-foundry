@@ -200,8 +200,8 @@ export class FoundryScene {
     let maxR = 0
     for (const v of this.creatures.values()) maxR = Math.max(maxR, v.center.length() + v.spec.radius)
     this.controls.target.set(0, 3, 0)
-    const d = Math.min(Math.max(maxR * 1.9 + 8, 16), 60)
-    this.camera.position.set(d * 0.55, d * 0.55, d * 0.8)
+    const d = Math.min(Math.max(maxR * 1.25 + 6, 14), 50)
+    this.camera.position.set(d * 0.45, d * 0.5, d * 0.85)
   }
 
   focusCreature(projectId: string) {

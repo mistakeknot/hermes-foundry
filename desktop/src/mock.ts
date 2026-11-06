@@ -11,7 +11,7 @@ const NATIVE_TO_STATUS: Record<string, Card['status']> = {
 }
 export function statusOf(native: string): Card['status'] { return NATIVE_TO_STATUS[native] ?? 'unknown' }
 
-const PROFILES = ['planner', 'coder', 'reviewer', 'ops']
+export const PROFILES = ['planner', 'coder', 'reviewer', 'ops']
 const BOARDS: { id: string; name: string; epics: string[]; cards: number }[] = [
   { id: 'main', name: 'Main factory', epics: ['Ingest', 'Planner', 'Router', 'Review gate', 'Deploy'], cards: 18 },
   { id: 'docs', name: 'Docs and demos', epics: ['Guides', 'Recordings', 'Site'], cards: 12 },
@@ -20,12 +20,12 @@ const BOARDS: { id: string; name: string; epics: string[]; cards: number }[] = [
 const NATIVES = ['triage', 'todo', 'ready', 'running', 'running', 'review', 'done', 'done', 'blocked', 'scheduled']
 const T0 = Date.parse('2026-11-07T09:00:00Z')
 
-export function buildFixture(): Snapshot {
+export function buildFixture(scale = 1): Snapshot {
   const r = rng(20261107)
   const projects: Project[] = BOARDS.map((b) => {
     const epics = b.epics.map((t, i) => ({ id: `${b.id}:e${i + 1}`, title: t }))
     const cards: Card[] = []
-    for (let i = 0; i < b.cards; i++) {
+    for (let i = 0; i < b.cards * scale; i++) {
       const native = NATIVES[Math.floor(r() * NATIVES.length)]
       const epic = epics[i % epics.length]
       cards.push({
@@ -71,8 +71,8 @@ export class MockApi implements FoundryApi {
   private epochN = 1
   private tick = 0
   private lastStep = 0
-  constructor(private now: () => number = Date.now, private stepMs = 3000) {
-    this.snap = buildFixture()
+  constructor(private now: () => number = Date.now, private stepMs = 3000, private scale = 1) {
+    this.snap = buildFixture(this.scale)
     this.lastStep = now()
   }
 
@@ -122,11 +122,18 @@ export class MockApi implements FoundryApi {
         this.emit({ type: 'worker_upsert', payload: { worker: { ...w, state: 'working' } } })
         return { ok: true }
       }
+      case 'stand':
+        this.emit({ type: 'paused', payload: { paused: c.on } })
+        return { ok: true }
+      case 'message': {
+        if (!this.snap.workers.some((x) => x.id === c.worker_id)) return { ok: false, error: `no such worker ${c.worker_id}` }
+        return { ok: true } // simulated: nothing reaches a real worker
+      }
       case 'new_worker':
         return { ok: false, error: 'simulated: no live launch call exists on stock Hermes' }
       case 'reset': {
         this.epochN++
-        this.snap = buildFixture()
+        this.snap = buildFixture(this.scale)
         this.snap.epoch = `fx${this.epochN}`
         this.snap.cursor = `${this.snap.epoch}.0`
         this.log = []; this.seq = 0; this.tick = 0
