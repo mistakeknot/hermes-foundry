@@ -100,6 +100,33 @@ describe('default camera frames every creature', () => {
     expect(scene.camera.position.distanceTo(scene.controls.target)).toBeCloseTo(dNarrow, 5) // widening changes nothing
   })
 
+  it('backing off is idempotent: narrow, widen, narrow again does not compound; only a narrower pane backs off further; a new grab is a new baseline', () => {
+    const dist = (s: ReturnType<typeof mk>) => s.camera.position.distanceTo(s.controls.target)
+    const scene = mk(); scene.update(snapshotWith(3)); scene.resize(1280, 633)
+    scene.controls.dispatchEvent({ type: 'start' })
+    const dWide = dist(scene)
+    scene.resize(540, 476)
+    const dNarrow = dist(scene)
+    expect(dNarrow).toBeCloseTo(dWide * (1280 / 633) / (540 / 476), 4)
+    scene.resize(1280, 633)
+    scene.resize(540, 476) // the same narrow size again: already compensated for
+    expect(dist(scene)).toBeCloseTo(dNarrow, 5)
+    scene.resize(1280, 633); scene.resize(540, 476); scene.resize(1280, 633); scene.resize(540, 476)
+    expect(dist(scene)).toBeCloseTo(dNarrow, 5) // any number of cycles
+    scene.resize(700, 476) // wider than the narrowest seen: nothing
+    expect(dist(scene)).toBeCloseTo(dNarrow, 5)
+    scene.resize(400, 476) // narrower than ever: backs off by exactly the extra ratio
+    expect(dist(scene)).toBeCloseTo(dNarrow * (540 / 476) / (400 / 476), 4)
+    const dNarrower = dist(scene)
+    // the user grabs the camera at this size: a fresh baseline here, so narrowing from here backs off from here
+    scene.controls.dispatchEvent({ type: 'start' })
+    scene.resize(1280, 633)
+    scene.resize(400, 476) // back to the baseline aspect: nothing
+    expect(dist(scene)).toBeCloseTo(dNarrower, 5)
+    scene.resize(300, 476)
+    expect(dist(scene)).toBeCloseTo(dNarrower * (400 / 300), 4)
+  })
+
   it('a resize reframes until the user moves the camera, then leaves the view alone', () => {
     const scene = mk(); scene.update(snapshotWith(3)); scene.resize(1280, 633)
     const first = scene.camera.position.clone()

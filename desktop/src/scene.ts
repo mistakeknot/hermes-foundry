@@ -158,7 +158,7 @@ export class FoundryScene {
     this.controls.minDistance = 4
     this.controls.maxDistance = 70
     this.controls.maxPolarAngle = Math.PI * 0.47
-    this.controls.addEventListener('start', () => { this.userMoved = true; this.focusedId = null; this.focus = null }) // from here the user owns the view
+    this.controls.addEventListener('start', () => { this.userMoved = true; this.focusedId = null; this.focus = null; this.fitAspect = this.camera.aspect }) // from here the user owns the view
     this.controls.target.set(0, 3, 0)
     this.loop()
   }
@@ -255,11 +255,14 @@ export class FoundryScene {
   private viewW = 0
   private viewH = 0
   private frameDist = 50
+  /** the pane aspect the camera distance is sized for; a held view backs off only when the pane gets narrower than this */
+  private fitAspect = 0
   private frameGeo: { sig: string; pts: THREE.Vector3[]; mid: THREE.Vector3 } | null = null
   frameValley(force: boolean) {
     if (this.framed && !force) return
     if (this.creatures.size === 0 || this.viewW < 2) return
     this.framed = true
+    this.fitAspect = this.camera.aspect
     this.frameSig = this.layoutSignature()
     // the points and their centre depend on the creatures, not the pane size: keep them between resizes
     if (this.frameGeo?.sig !== this.frameSig) {
@@ -287,6 +290,7 @@ export class FoundryScene {
     if (!v) return
     this.userMoved = true
     this.focusedId = projectId
+    this.fitAspect = this.camera.aspect
     const dest = this.fitCreature(v)
     if (!dest) return
     this.allowReach(dest.pos.distanceTo(dest.target))
@@ -812,14 +816,19 @@ export class FoundryScene {
   /**
    * The user owns the view, so a resize must not reframe it, but a pane that gets narrower would cut off both sides of
    * what they were looking at (the vertical field of view is fixed, so only the width shrinks). Back the camera off along
-   * its line of sight by the same ratio, which keeps the horizontal span they had; a pane that gets wider is left alone.
+   * its line of sight by the ratio between the aspect the distance was sized for (fitAspect) and the new one, which keeps
+   * the horizontal span they had. A pane that is as wide or wider than that changes nothing, so narrowing, widening and
+   * narrowing again to the same size does not compound; only a pane narrower than any seen since the view was last set
+   * backs off further. Framing, refocusing and the user taking the view (orbit, zoom) set a new fitAspect.
    */
   private keepWidth(prevAspect: number) {
-    const k = prevAspect / this.camera.aspect
+    if (!(this.fitAspect > 0)) this.fitAspect = prevAspect
+    const k = this.fitAspect / this.camera.aspect
     if (!(k > 1) || !Number.isFinite(k)) return
     const dir = this.camera.position.clone().sub(this.controls.target)
     const d = dir.length() * k
     if (!(d > 0)) return
+    this.fitAspect = this.camera.aspect
     this.allowReach(d)
     this.camera.position.copy(this.controls.target).addScaledVector(dir.normalize(), d)
     this.controls.update()
@@ -831,6 +840,7 @@ export class FoundryScene {
     const dest = this.fitCreature(v)
     if (!dest) return
     this.focus = null
+    this.fitAspect = this.camera.aspect
     this.allowReach(dest.pos.distanceTo(dest.target))
     this.controls.target.copy(dest.target)
     this.camera.position.copy(dest.pos)
