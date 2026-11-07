@@ -219,8 +219,8 @@ the climber's slip, and a card newly becoming blocked. There are no audio files,
 license. Cues are quiet, the same cue is not replayed within 400 ms, and no audio context exists until sound is turned on.
 A saved "on" is only a preference: the browser's autoplay rule allows audio to start from a user gesture, so the audio
 context is created only when you click the chip or make the first click or key press in the pane, and cues that arrive
-before that are dropped. Audio starts only if the browser permits it; if it does not, the pane stays silent and nothing
-else changes. The context is closed when the pane closes, on a best-effort basis.
+before that are dropped. Audio starts only if the browser permits it; if it does not, the pane stays silent and the chip
+returns to off. The context is closed when the pane closes, on a best-effort basis.
 
 ## Known limits
 
