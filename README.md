@@ -5,7 +5,7 @@ valley of creatures and scales, not agents at desks: each kanban board is a crea
 its status, and each running worker is a climber sitting on the card it holds. You operate cards from the scene. Drag a
 climber onto a scale to assign it (you pick the profile), stand the whole factory to pause it, and watch a worker that
 loops slip down its scale and catch a new hold. Click a scale to open its card, change its status or comment on it.
-Stand and slip are fixture-only; see [Modes](#modes). It is a hackathon entry. Private until mk publishes.
+Stand and slip are fixture-only; see [Modes](#modes). It is a hackathon entry.
 
 It ships as one Hermes plugin with three parts:
 
