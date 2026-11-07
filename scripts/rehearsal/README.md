@@ -73,7 +73,7 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
 - **`selftest` is confined too.** It needs `BB_THREAD_STORAGE`, makes its scratch directory inside its own run directory
   (not the system temp dir) and removes that run directory when it ends.
 
-## Soak: what it judges, and one measured run
+## Soak: what it judges, and two measured runs
 
 `soak` judges **invariants only**; frame rate and JS heap are recorded and never judged. It sets `HERMES_HOME` to its own scratch home like the other subcommands.
 
@@ -81,15 +81,15 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
 - **Touch.** Through the browser's touchscreen API: taps on exactly three distinct cards each select that card and show the panel; one finger on empty ground orbits; two fingers change the camera distance and keep the selection; the canvas has `touch-action: none`.
 - **Remount.** `--cycles` times: leave the pane (the scene must be disposed, its WebGL context lost, and no canvas or labels left in the page), come back (a new scene, one canvas, a constant geometry count after the first return).
 
-One run on 2026-11-06 (main `65ebf66` plus this harness, 110 cards, 200 updates, 6 remounts, headless Chromium on software WebGL, 32 CPUs at load average about 7 to 13): PASS.
+Two runs on 2026-11-06 (the first on main `65ebf66` plus this harness, 110 cards, 200 updates, 6 remounts, headless Chromium on software WebGL, 32 CPUs at load average about 7 to 13; the second on main `192583d`, same code, load average 15 to 25): PASS both times. Where the two differ, the table gives both.
 
 | Measure | Value |
 | --- | --- |
-| `scene.update()` with one status change | median 4.4 ms, p95 7.9 ms, max 14 ms |
-| `scene.update()` with nothing changed | median 1.9 ms, max 8.1 ms |
-| Geometries during churn | 74 at start, 97 to 105 while statuses are spread across more bands, 74 again after restoring the snapshot |
-| Frame pacing before and after churn | about 46 fps and about 43 fps (software rendering on a loaded host) |
-| Remount geometries | 74 on every return after the first |
-| Remount JS heap | about 152 to 184 MB after the first return, not rising steadily (the first return read 383 MB before a collection) |
+| `scene.update()` with one status change | median 4.4 to 4.7 ms, p95 7.9 to 8.6 ms, max 14 ms |
+| `scene.update()` with nothing changed | median 1.9 ms in the first run, 1.8 ms in the second, max 8.1 ms |
+| Geometries during churn | 73 or 74 at start (74 in the first run, 73 in the second, same code), 97 to 105 while statuses are spread across more bands, back to the start count after restoring the snapshot |
+| Frame pacing before and after churn | about 46 and 43 fps in the first run, about 46 and 40 in the second (software rendering on a loaded host) |
+| Remount geometries | 74 in the first run and 73 in the second, constant across the returns after the first within each run |
+| Remount JS heap | about 152 to 184 MB after the first return, not rising steadily (the first return read 381 to 383 MB before a collection) |
 
-These are single-run, software-rendered observations on a shared host, not a floor or a typical rate. Real GPUs, other browsers and physical touch devices are not covered. Heap readings are not collected before they are sampled, so they swing; only the counts are checked.
+These are two-run, software-rendered observations on a shared host, not a floor or a typical rate. Real GPUs, other browsers and physical touch devices are not covered. Heap readings are not collected before they are sampled, so they swing; only the counts are checked.
