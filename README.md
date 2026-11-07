@@ -86,10 +86,11 @@ If the pane cannot reach Foundry's router it falls back to an in-pane fixture (a
 Assigning a profile only assigns. Foundry never claims or starts a card, and Hermes may start it once it is assigned
 (which can spend model tokens through the normal dispatcher). Nothing in Foundry calls a model itself.
 
-A worker only picks the card up if a Hermes dispatcher is running. On the rehearsed commit the dispatcher is embedded
-in the gateway (`hermes gateway run`), and `hermes webapp` had already started one; with no gateway running the
-assigned card stays in `ready`. If the gateway cannot read the home's `config.yaml` (a duplicate key, for example) the
-dispatcher claims nothing and logs `skipped_nonspawnable` on the card.
+In the 2026-11-06 rehearsal on Hermes `5ec43faa`, using a scratch home and a stub model, a worker picked an assigned card
+up only through a dispatcher that was running: the dispatcher was embedded in the gateway (`hermes gateway run`), and
+`hermes webapp` had already started one. A card assigned while no gateway was running stayed in `ready`. When the gateway
+could not read the home's `config.yaml` (a duplicate key, in one run), its dispatcher claimed nothing and logged
+`skipped_nonspawnable` on the card. These are observations from that run, not guarantees of how Hermes behaves elsewhere.
 
 ## Desktop pane
 
