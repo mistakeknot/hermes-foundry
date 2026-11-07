@@ -86,6 +86,11 @@ If the pane cannot reach Foundry's router it falls back to an in-pane fixture (a
 Assigning a profile only assigns. Foundry never claims or starts a card, and Hermes may start it once it is assigned
 (which can spend model tokens through the normal dispatcher). Nothing in Foundry calls a model itself.
 
+A worker only picks the card up if a Hermes dispatcher is running. On the rehearsed commit the dispatcher is embedded
+in the gateway (`hermes gateway run`), and `hermes webapp` had already started one; with no gateway running the
+assigned card stays in `ready`. If the gateway cannot read the home's `config.yaml` (a duplicate key, for example) the
+dispatcher claims nothing and logs `skipped_nonspawnable` on the card.
+
 ## Desktop pane
 
 The `/foundry` pane lives in `desktop/`. `desktop/plugin.js` is the committed build and is
@@ -187,8 +192,11 @@ receipt in this repository).
 - **Real WebGL and GPU are untested.** Nothing has been run on a real GPU; see Performance.
 - **Live mode needs a newer Hermes.** By hand, Hermes 0.16.0 (2026.6.5) lacks the kanban modules, so live mode answers
   503 there. The live tests (skipped unless `FOUNDRY_HERMES_SRC` points at a Hermes with the kanban modules) were run
-  by hand against Hermes main at commit 90d6b98f (2026-11-05) and passed. Live mode has not been run end to end
-  through a real dispatcher with a worker picking up an assigned card.
+  by hand against Hermes main at commit 90d6b98f (2026-11-05) and passed. One end-to-end hand run (2026-11-06,
+  Hermes `5ec43faa`, a scratch `HERMES_HOME`, a local stand-in model server, no real model or credential) assigned a
+  card from the pane in headless Chromium; the dispatcher embedded in the gateway claimed it, a real worker finished
+  it, and the pane showed ready, running, then done (about 22 s after the click, in that one run). It is one run on
+  one commit with a stub model, not a measurement of how long real work takes.
 - **The pane inside a real Hermes Desktop is not exercised by the install gate.** The unit tests cover the pane in
   jsdom; separate hand runs drove it in headless Chromium. The desktop half is opt-in and, on some builds, only
   reachable through the browser-storage setting above.
