@@ -77,9 +77,9 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
 
 `soak` judges **invariants only**; frame rate and JS heap are recorded and never judged. It sets `HERMES_HOME` to its own scratch home like the other subcommands.
 
-- **Churn.** `--updates` calls of `scene.update()`, each changing one card's status. After restoring the original snapshot, and after 100 further unchanged updates, geometries, programs and objects must equal the starting counts, with one canvas and no extra labels.
-- **Touch.** Through the browser's touchscreen API: taps select three cards and show the panel; one finger on empty ground orbits; two fingers change the camera distance and keep the selection; the canvas has `touch-action: none`.
-- **Remount.** `--cycles` times: leave the pane (the scene must be disposed, its WebGL context lost, no canvas or labels left), come back (a new scene, one canvas, a constant geometry count after the first return).
+- **Churn.** `--updates` calls of `scene.update()`, each changing one card's status. The counts must be present, and at least one update must have run. After restoring the original snapshot, and after 100 further unchanged updates, geometries, textures, programs, objects, labels and canvases must each equal the starting count, and there must be one canvas at every mark.
+- **Touch.** Through the browser's touchscreen API: taps on exactly three distinct cards each select that card and show the panel; one finger on empty ground orbits; two fingers change the camera distance and keep the selection; the canvas has `touch-action: none`.
+- **Remount.** `--cycles` times: leave the pane (the scene must be disposed, its WebGL context lost, and no canvas or labels left in the page), come back (a new scene, one canvas, a constant geometry count after the first return).
 
 One run on 2026-11-06 (main `7553684`, 110 cards, 200 updates, 6 remounts, headless Chromium on software WebGL, 32 CPUs at load average about 12 to 15): PASS.
 

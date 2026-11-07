@@ -769,6 +769,9 @@ def cmd_perf(a):
     return 0 if not failures else 1
 
 
+SOAK_COUNTS = ("geometries", "textures", "programs", "objects", "labels", "canvases")   # compared at the start, after restore and after unchanged updates
+
+
 def soak_verdict(res):
     """Invariants of the soak. Only things that must hold: no resource left behind, touch does what the mouse does. Frame rate and heap
     are recorded but never judged (software rendering on a shared host; the JS heap is garbage-collected on its own schedule)."""
@@ -776,17 +779,28 @@ def soak_verdict(res):
     c = res.get("churn")
     if not isinstance(c, dict): bad.append("churn did not run")
     else:
+        isint = lambda v: isinstance(v, int) and not isinstance(v, bool)
+        if not isint(c.get("updates")) or c["updates"] <= 0: bad.append(f"churn: updates run is {c.get('updates')!r}, not a positive count")
+        if not isinstance(c.get("marks"), list) or not c["marks"]: bad.append("churn: no marks recorded")
+        start = c.get("start") if isinstance(c.get("start"), dict) else {}
+        for f in SOAK_COUNTS:
+            if not isint(start.get(f)): bad.append(f"churn: start {f} is {start.get(f)!r}, not a count")
         for k in ("after_restore", "after_unchanged"):
-            for f in ("geometries", "textures", "objects", "labels", "canvases"):
-                if c.get(k, {}).get(f) != c.get("start", {}).get(f): bad.append(f"churn: {f} {c.get(k, {}).get(f)} after {k} vs {c.get('start', {}).get(f)} at start")
-        if any(m.get("canvases") != 1 for m in c.get("marks", [])): bad.append("churn: more than one canvas during the soak")
+            snap = c.get(k) if isinstance(c.get(k), dict) else {}
+            for f in SOAK_COUNTS:
+                if not isint(snap.get(f)): bad.append(f"churn: {k} {f} is {snap.get(f)!r}, not a count")
+                elif isint(start.get(f)) and snap[f] != start[f]: bad.append(f"churn: {f} {snap[f]} after {k} vs {start[f]} at start")
+        if any(not isinstance(m, dict) or m.get("canvases") != 1 for m in c.get("marks", []) if isinstance(c.get("marks"), list)): bad.append("churn: not exactly one canvas at every mark")
     t = res.get("touch")
     if not isinstance(t, dict): bad.append("touch did not run")
     else:
         if t.get("touch_action") != "none": bad.append(f"touch: canvas touch-action is {t.get('touch_action')!r}, not 'none'")
         if not t.get("tap_targets"): bad.append("touch: no card to tap")
-        for x in t.get("taps", []):
-            if x.get("selected") != x.get("want") or not x.get("panel"): bad.append(f"touch: tap on {x.get('want')} selected {x.get('selected')} (panel shown: {x.get('panel')})")
+        taps = t.get("taps") if isinstance(t.get("taps"), list) else []
+        wants = [x.get("want") for x in taps if isinstance(x, dict)]
+        if len(taps) != 3 or len(set(wants)) != 3 or any(not isinstance(w, str) or not w for w in wants): bad.append(f"touch: expected taps on exactly 3 distinct cards, got {wants!r}")
+        for x in taps:
+            if not isinstance(x, dict) or x.get("selected") != x.get("want") or x.get("panel") is not True: bad.append(f"touch: tap on {x.get('want') if isinstance(x, dict) else x!r} selected {x.get('selected') if isinstance(x, dict) else None} (panel shown: {x.get('panel') if isinstance(x, dict) else None})")
         for k in ("orbit_moved", "pinch_dist_changed", "selection_kept_after_pinch"):
             if t.get(k) is not True: bad.append(f"touch: {k} is {t.get(k)!r}" + (f" ({t.get(k.split('_')[0] + '_err')})" if t.get(k.split('_')[0] + '_err') else ""))
     m = res.get("remount")
@@ -794,12 +808,15 @@ def soak_verdict(res):
     else:
         geo = None
         for x in m[1:]:
-            a, n = x.get("away", {}), x.get("cycle")
+            a, n = x.get("away") if isinstance(x.get("away"), dict) else {}, x.get("cycle")
             if a.get("old_disposed") is not True or a.get("old_context_lost") is not True: bad.append(f"remount {n}: old scene disposed={a.get('old_disposed')} context lost={a.get('old_context_lost')}")
             if a.get("labels") != 0: bad.append(f"remount {n}: {a.get('labels')} label(s) left in the page while away")
+            if a.get("canvases") != 0: bad.append(f"remount {n}: {a.get('canvases')} canvas(es) left in the page while away")
+            g = x.get("geometries")
+            if not isinstance(g, int) or isinstance(g, bool): bad.append(f"remount {n}: geometries is {g!r}, not a count"); continue
             if not x.get("new_scene") or x.get("canvases") != 1: bad.append(f"remount {n}: new scene={x.get('new_scene')} canvases={x.get('canvases')}")
-            geo = x.get("geometries") if geo is None else geo
-            if x.get("geometries") != geo: bad.append(f"remount {n}: geometries {x.get('geometries')} vs {geo} after the first return")
+            geo = g if geo is None else geo
+            if g != geo: bad.append(f"remount {n}: geometries {x.get('geometries')} vs {geo} after the first return")
     return bad
 
 
@@ -874,10 +891,10 @@ def cmd_selftest(a):
     r, s2 = good(); r["board"].pop(); t("verdict fails on a missing trial", bool(checklist_verdict(r, plan, floor, s2)))
     r, s2 = good(); t("verdict fails without the floor", bool(checklist_verdict(r, plan, None, s2)))
     def sk():
-        z = {"geometries": 74, "textures": 0, "objects": 110, "labels": 11, "canvases": 1}
-        rm = lambda n: {"cycle": n, "new_scene": True, "canvases": 1, "geometries": 72, "away": {"old_disposed": True, "old_context_lost": True, "labels": 0}}
-        return {"churn": {"start": dict(z), "after_restore": dict(z), "after_unchanged": dict(z), "marks": [{"canvases": 1}]},
-                "touch": {"touch_action": "none", "tap_targets": 1, "taps": [{"want": "c", "selected": "c", "panel": True}], "orbit_moved": True, "pinch_dist_changed": True, "selection_kept_after_pinch": True},
+        z = {"geometries": 74, "textures": 0, "programs": 4, "objects": 110, "labels": 11, "canvases": 1}
+        rm = lambda n: {"cycle": n, "new_scene": True, "canvases": 1, "geometries": 72, "away": {"old_disposed": True, "old_context_lost": True, "labels": 0, "canvases": 0}}
+        return {"churn": {"updates": 200, "start": dict(z), "after_restore": dict(z), "after_unchanged": dict(z), "marks": [{"canvases": 1}]},
+                "touch": {"touch_action": "none", "tap_targets": 6, "taps": [{"want": w, "selected": w, "panel": True} for w in ("c1", "c2", "c3")], "orbit_moved": True, "pinch_dist_changed": True, "selection_kept_after_pinch": True},
                 "remount": [{"cycle": 0}, rm(1), rm(2)]}
     t("soak verdict passes a clean run", soak_verdict(sk()) == [])
     r = sk(); r["churn"]["after_restore"]["geometries"] = 75; t("soak verdict fails a leaked geometry", bool(soak_verdict(r)))
@@ -886,6 +903,20 @@ def cmd_selftest(a):
     r = sk(); r["touch"]["taps"][0]["selected"] = None; t("soak verdict fails a tap that selects nothing", bool(soak_verdict(r)))
     r = sk(); r["touch"]["touch_action"] = "auto"; t("soak verdict fails a canvas that scrolls the page", bool(soak_verdict(r)))
     r = sk(); del r["touch"]; t("soak verdict fails a missing section", bool(soak_verdict(r)))
+    r = sk(); r["churn"] = {}; t("soak verdict fails empty churn evidence", bool(soak_verdict(r)))
+    r = sk(); r["churn"]["marks"] = []; t("soak verdict fails a churn with no marks", bool(soak_verdict(r)))
+    r = sk(); r["churn"]["updates"] = 0; t("soak verdict fails zero updates run", bool(soak_verdict(r)))
+    r = sk(); del r["churn"]["after_restore"]["programs"]; t("soak verdict fails a missing churn count", bool(soak_verdict(r)))
+    r = sk(); r["churn"]["after_unchanged"]["programs"] = 9; t("soak verdict fails a leaked program", bool(soak_verdict(r)))
+    r = sk(); del r["remount"][1]["geometries"]; t("soak verdict fails missing remount geometries", bool(soak_verdict(r)))
+    r = sk(); r["remount"][2]["away"]["canvases"] = 1; t("soak verdict fails a canvas retained while away", bool(soak_verdict(r)))
+    r = sk(); del r["remount"][2]["away"]["canvases"]; t("soak verdict fails an unrecorded away canvas count", bool(soak_verdict(r)))
+    r = sk(); r["touch"]["taps"] = []; t("soak verdict fails zero taps", bool(soak_verdict(r)))
+    r = sk(); r["touch"]["taps"] = r["touch"]["taps"][:1]; t("soak verdict fails one tap", bool(soak_verdict(r)))
+    r = sk(); del r["touch"]["taps"]; t("soak verdict fails missing taps", bool(soak_verdict(r)))
+    r = sk(); r["touch"]["taps"][1]["want"] = "c1"; r["touch"]["taps"][1]["selected"] = "c1"; t("soak verdict fails repeated tap targets", bool(soak_verdict(r)))
+    r = sk(); r["touch"]["taps"][2]["want"] = ""; r["touch"]["taps"][2]["selected"] = ""; t("soak verdict fails an empty wanted id", bool(soak_verdict(r)))
+    r = sk(); r["touch"]["taps"][2]["panel"] = False; t("soak verdict fails a tap without the panel", bool(soak_verdict(r)))
     # screenshot names and modes cannot reach outside OUT
     for m in ("../x", "/abs", "fixture,../x", "live,live", "", "fixture/", "Live"):
         try:
