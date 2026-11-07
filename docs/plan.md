@@ -4,7 +4,7 @@ Bead: mk-ps6ow. The idea, from the project brief: a 3D workspace to visualize an
 Deadline: Nov 11, 2026, 2 PM PST. Build window: Nov 7 to Nov 10; Nov 11 morning is for the video and submission.
 Name "Foundry" is a placeholder (design choice).
 
-**Status of this document: proposed.** The project brief is the idea: a 3D workspace to visualize and operate the software factory in Hermes. Everything else here is a design choice, proposed and not decided: the scope, the day plan, the cut order and every "must", "never" and "required" below. No line in this document records a decision other than the idea and the recorded cut of the beads adapter (bead mk-ps6ow.7). If a cut would change what the entry shows, it goes to the maintainer as one question.
+**Status of this document: proposed.** The project brief is the idea: a 3D workspace to visualize and operate the software factory in Hermes. Everything else here is a design choice, proposed and not decided: the scope, the day plan, the cut order and every "must", "never" and "required" below. No line in this document records a decision other than the idea. If a cut would change what the entry shows, it goes to the maintainer as one question.
 
 ## What "the software factory" means here (design choice)
 Judges run stock Hermes, so the factory must be Hermes's own:
@@ -13,7 +13,7 @@ Judges run stock Hermes, so the factory must be Hermes's own:
 - **Docs** are files that cards link to.
 - **Workers** are Hermes sessions and delegated subagents.
 
-A second adapter that reads beads and an estate tracker was a bonus. It is cut (bead mk-ps6ow.7): a feasibility note judged it not worth the risk to the boot path before the deadline, and no code was written for it.
+A second adapter that reads beads and an estate tracker is a proposed bonus. Proposed, not decided: cut it first (see the cut order under Risks); it comes back only if everything above the floor is done and green. No code is written for it.
 
 ## What you see and do
 - **Valley view:** each project is a creature standing in one valley, sized by open work.
@@ -94,7 +94,7 @@ Optional beats, each replacing one floor beat only if it is kept (and shown as s
 ## Risks
 - **The cross-plugin REST assumption and CSP for three.js are unproven.** Fallback: Foundry's own Python router proxies the kanban calls; the scene may be served as a local web page opened from a slash command only if it keeps the same authenticated origin as the Hermes plugin router (it must not weaken authentication; if it cannot, the fallback is not used).
 - **Legibility past about 100 cards.** Show scales only on zoom; group by epic.
-- **Scope (proposed, not decided). Proposed cut order:** the beads adapter (cut, bead mk-ps6ow.7), sound, the slip check, "stand" (unless proven Nov 7), transcripts, live message and delegation, then the drag gesture. Proposed floor, not to be cut: click-to-open, comment and status buttons, and profile assignment via a button. The floor storyboard above needs only the floor.
+- **Scope (proposed, not decided). Proposed cut order:** the beads adapter (proposed first cut; no code is written for it), sound, the slip check, "stand" (unless proven Nov 7), transcripts, live message and delegation, then the drag gesture. Proposed floor, not to be cut: click-to-open, comment and status buttons, and profile assignment via a button. The floor storyboard above needs only the floor.
 - **"Stand" must not overclaim.** It pauses at the next tool boundary and never claims to cancel a tool call already running.
 - **Acceptance:** a small timed checklist (open a card, change a status, assign a profile, each at least as fast as the 2D board) and a clean-install fixture rehearsal on Nov 9 and again on Nov 10. Live execution is optional.
 
