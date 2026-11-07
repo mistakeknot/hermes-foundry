@@ -73,7 +73,7 @@ Now install Foundry into Hermes. Run these from anywhere, in the same shell (so 
     "$HERMES" plugins enable foundry
     "$HERMES" dashboard
 
-`<git-url>` is any URL `git` can clone (while the repo is private, a `file:///path/to/clone` of this repo works).
+`<git-url>` is any URL `git` can clone (for a local checkout, a `file:///path/to/clone` URL also works).
 This is the sequence `scripts/install_gate.sh` runs and checks.
 
 That serves the router in fixture mode. The desktop half is **opt-in** and stays hidden until you turn it on; see

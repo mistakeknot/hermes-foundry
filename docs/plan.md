@@ -4,7 +4,7 @@ Bead: mk-ps6ow. The idea, from the project brief: a 3D workspace to visualize an
 Deadline: Nov 11, 2026, 2 PM PST. Build window: Nov 7 to Nov 10; Nov 11 morning is for the video and submission.
 Name "Foundry" is a placeholder (design choice).
 
-**Status of this document: proposed.** The project brief is the idea: a 3D workspace to visualize and operate the software factory in Hermes. Everything else here is a design choice, proposed and not decided: the scope, the day plan, the cut order and every "must", "never" and "required" below. No line in this document records a decision other than the idea. If a cut would change what the entry shows, it goes to the maintainer as one question.
+**Status of this document: proposed.** The project brief is the idea: a 3D workspace to visualize and operate the software factory in Hermes. Everything else here is a design choice, proposed and not decided: the scope, the day plan, the cut order and every "must", "never" and "required" below. No line in this document records a decision other than the idea and the recorded cut of the beads adapter (bead mk-ps6ow.7). If a cut would change what the entry shows, it goes to the maintainer as one question.
 
 ## What "the software factory" means here (design choice)
 Judges run stock Hermes, so the factory must be Hermes's own:
@@ -89,7 +89,7 @@ Optional beats, each replacing one floor beat only if it is kept (and shown as s
   - exec A's reading of the Hermes plugin SDK on Nov 6 is that `ctx.rest` cannot reach another plugin's REST namespace and `ctx.socket` does nothing on OAuth remotes. Foundry therefore assumes it must serve its own router and poll. This is a reading of source, not a runtime test;
   - whether three.js runs inside a runtime `plugin.js` bundle without CSP issues is unchecked.
   - Both are re-proved at the Nov 7 integration gate.
-- **Probe clone:** `/tmp/foundry-probe/hermes-agent`, outside scanned roots. It is disposable.
+- **Probe clone:** a disposable source checkout of Hermes, outside scanned roots.
 
 ## Risks
 - **The cross-plugin REST assumption and CSP for three.js are unproven.** Fallback: Foundry's own Python router proxies the kanban calls; the scene may be served as a local web page opened from a slash command only if it keeps the same authenticated origin as the Hermes plugin router (it must not weaken authentication; if it cannot, the fallback is not used).
@@ -99,7 +99,7 @@ Optional beats, each replacing one floor beat only if it is kept (and shown as s
 - **Acceptance:** a small timed checklist (open a card, change a status, assign a profile, each at least as fast as the 2D board) and a clean-install fixture rehearsal on Nov 9 and again on Nov 10. Live execution is optional.
 
 ## Gates (unchanged)
-- The code goes in a new private repo first. Making it public, the catalog PR, the X post and the entry form are all the maintainer's.
+- The code started in a private repo. Making it public, the catalog PR, the X post and the entry form are all the maintainer's.
 - Cross-lab review of this plan before executors start (the reviewer independence rule).
 
 ## Revision log
