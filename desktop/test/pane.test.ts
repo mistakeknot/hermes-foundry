@@ -493,6 +493,110 @@ describe('short pane: the Comment box', () => {
   it('flows with the card in a pane under 500 px high, so it cannot cover the profile and status rows', async () => {
     expect((await dockWithPaneHeight(376)).style.position).not.toBe('sticky')
   })
+
+  // jsdom has no layout, so the measurements are doubles: the pane is `h` high and the Assign rows end at `c.endY`. The dock's
+  // height is modelled from its own box (content + bottom padding + top border) so it changes if the dock's geometry changes
+  // between pinned and flowing, which is the feedback path the pane's measurement must not be fooled by.
+  interface DockCtl { endY: number; dock(): HTMLElement; dockHeight(): number; positions(): string[]; rerender(): Promise<void> }
+  async function dockLayout(h: number, endY: number, content: number, body: (c: DockCtl) => Promise<void>) {
+    const protos: [string, PropertyDescriptor | undefined][] = [
+      ['clientHeight', Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')],
+      ['offsetHeight', Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')],
+    ]
+    const rectDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'getBoundingClientRect')
+    const boxOf = (el: HTMLElement) => content + (parseFloat(el.style.paddingBottom || '0') || 0) + (el.style.borderTop ? 1 : 0)
+    const ctl: DockCtl = {
+      endY,
+      dock: () => document.getElementById('foundry-comment-dock') as HTMLElement,
+      dockHeight: () => boxOf(ctl.dock()),
+      positions: () => [],
+      rerender: async () => { // typing in the comment box re-renders the card view with a new value each time
+        const ta = document.getElementById('foundry-comment') as HTMLTextAreaElement
+        const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+        await act(async () => { set.call(ta, ta.value + 'x'); ta.dispatchEvent(new Event('input', { bubbles: true })) })
+        await tick()
+      },
+    }
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => h })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get(this: HTMLElement) { return this.id === 'foundry-comment-dock' ? boxOf(this) : 0 } })
+    Object.defineProperty(Element.prototype, 'getBoundingClientRect', { configurable: true, value(this: HTMLElement) {
+      const y = this.id === 'foundry-panel' ? 0 : this.style.height === '0px' ? ctl.endY : 0
+      return { top: y, bottom: y, left: 0, right: 0, width: 0, height: 0, x: 0, y }
+    } })
+    try {
+      const fx = await new MockApi(Date.now, 3_600_000).snapshot()
+      const card = fx.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
+      const scene = await mount(() => Promise.reject(new Error('no router')))
+      await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+      await dragOnto(scene, fx.workers[0].id, card.id)
+      await waitFor(() => !!document.getElementById('foundry-comment-dock'), 'the card panel')
+      await tick()
+      const seen: string[] = [ctl.dock().style.position]
+      const obs = new MutationObserver(() => { const pos = ctl.dock().style.position; if (seen[seen.length - 1] !== pos) seen.push(pos) })
+      obs.observe(ctl.dock(), { attributes: true, attributeFilter: ['style'] })
+      ctl.positions = () => { obs.takeRecords(); const pos = ctl.dock().style.position; if (seen[seen.length - 1] !== pos) seen.push(pos); return [...seen] }
+      await body(ctl)
+      obs.disconnect()
+    } finally {
+      for (const [k, d] of protos) { if (d) Object.defineProperty(HTMLElement.prototype, k, d); else delete (HTMLElement.prototype as any)[k] }
+      if (rectDesc) Object.defineProperty(Element.prototype, 'getBoundingClientRect', rectDesc)
+    }
+  }
+  async function dockMeasured(h: number, endY: number, content: number) {
+    let el!: HTMLElement
+    await dockLayout(h, endY, content, async (c) => { el = c.dock() })
+    return el
+  }
+  it('a tall-enough pane (500 to 535 px) keeps the dock pinned when the Assign rows end above it', async () => {
+    expect((await dockMeasured(520, 300, 109)).style.position).toBe('sticky') // rows end at 300, room above the dock is 400
+  })
+  it('a pane of 500 to 535 px unpins the dock when a wrapped title pushes the Assign rows under it', async () => {
+    expect((await dockMeasured(500, 420, 109)).style.position).not.toBe('sticky') // rows end at 420 > room 380
+  })
+  it('... also at 535 px', async () => {
+    expect((await dockMeasured(535, 440, 119)).style.position).not.toBe('sticky') // 440 > 405
+  })
+  it('the dock stays pinned when the rows end exactly at the edge of the room, and unpins one pixel past it', async () => {
+    expect((await dockMeasured(520, 400, 109)).style.position).toBe('sticky')
+  })
+  it('... and one pixel past the edge of the room', async () => {
+    expect((await dockMeasured(520, 401, 109)).style.position).not.toBe('sticky')
+  })
+  it('the dock has the same box pinned and flowing, so its height does not change when it changes position', async () => {
+    await dockLayout(520, 300, 100, async (c) => {
+      const pinned = c.dockHeight()
+      expect(c.dock().style.position).toBe('sticky')
+      c.endY = 450                                  // rows end under the pinned dock: it flows
+      await c.rerender()
+      expect(c.dock().style.position).toBe('static')
+      expect(c.dockHeight()).toBe(pinned)           // same margin, padding and border in both modes
+      expect(c.dock().style.borderTop).not.toBe('')
+    })
+  })
+  it('repeated renders settle: a marker inside the hysteresis band neither flips the dock nor oscillates', async () => {
+    await dockLayout(520, 450, 100, async (c) => {  // room is 520 - 111 = 409; 450 > 409 unpins
+      for (let i = 0; i < 6; i++) await c.rerender()
+      expect(c.positions()).toEqual(['static'])     // flowed during mount, then never changed over six renders
+      c.endY = 395                                  // under room (409) but inside the 24 px band: stays flowing
+      for (let i = 0; i < 6; i++) await c.rerender()
+      expect(c.positions()).toEqual(['static'])
+    })
+  })
+  it('recovers across the hysteresis boundary: it re-pins once the rows end more than 24 px above the room, and only once', async () => {
+    await dockLayout(520, 450, 100, async (c) => {
+      await c.rerender()
+      expect(c.dock().style.position).toBe('static')
+      c.endY = 386                                  // room 409, so 409 - 24 = 385: 386 is still inside the band
+      await c.rerender()
+      expect(c.dock().style.position).toBe('static')
+      c.endY = 384                                  // past the band
+      await c.rerender()
+      expect(c.dock().style.position).toBe('sticky')
+      for (let i = 0; i < 6; i++) await c.rerender()
+      expect(c.dock().style.position).toBe('sticky')
+      expect(c.positions().filter((x) => x === 'static').length).toBeLessThanOrEqual(1)
+    })
+  })
 })
 
 describe('sound cues in the pane', () => {
