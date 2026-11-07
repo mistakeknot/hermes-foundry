@@ -11,6 +11,7 @@ and stops everything it started on exit (it removes the home's files too, unless
     python3 scripts/rehearsal/rehearse.py checklist   # open / status / assign, pane vs 2D board, 3 trials each
     python3 scripts/rehearsal/rehearse.py shots       # art-audit screenshots (SHOTS_MODES: fixture, live or fixture,live; nothing else is accepted)
     python3 scripts/rehearsal/rehearse.py perf --cards 110   # frame pacing; check `uptime` first
+    python3 scripts/rehearsal/rehearse.py soak --cards 110   # long-session soak: scene churn, touch input, remount disposal (--updates N, --cycles N)
     python3 scripts/rehearsal/rehearse.py verdict out/checklist.json   # re-judge a saved checklist (exit 0 only for a complete, passing run)
     python3 scripts/rehearsal/rehearse.py selftest    # offline checks: redaction, confinement, ownership, verdict, screenshot names (needs BB_THREAD_STORAGE)
 
@@ -71,3 +72,24 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
   harness or cleanup failure fails it), and then every trial, UI, scene and database check is re-judged.
 - **`selftest` is confined too.** It needs `BB_THREAD_STORAGE`, makes its scratch directory inside its own run directory
   (not the system temp dir) and removes that run directory when it ends.
+
+## Soak: what it judges, and one measured run
+
+`soak` judges **invariants only**; frame rate and JS heap are recorded and never judged. It sets `HERMES_HOME` to its own scratch home like the other subcommands.
+
+- **Churn.** `--updates` calls of `scene.update()`, each changing one card's status. After restoring the original snapshot, and after 100 further unchanged updates, geometries, programs and objects must equal the starting counts, with one canvas and no extra labels.
+- **Touch.** Through the browser's touchscreen API: taps select three cards and show the panel; one finger on empty ground orbits; two fingers change the camera distance and keep the selection; the canvas has `touch-action: none`.
+- **Remount.** `--cycles` times: leave the pane (the scene must be disposed, its WebGL context lost, no canvas or labels left), come back (a new scene, one canvas, a constant geometry count after the first return).
+
+One run on 2026-11-06 (main `7553684`, 110 cards, 200 updates, 6 remounts, headless Chromium on software WebGL, 32 CPUs at load average about 12 to 15): PASS.
+
+| Measure | Value |
+| --- | --- |
+| `scene.update()` with one status change | median 4.9 ms, p95 9.8 ms, max 24.4 ms |
+| `scene.update()` with nothing changed | median 1.7 ms, max 4.8 ms |
+| Geometries during churn | 72 at start, 97 to 106 while statuses are spread across more bands, 72 again after restoring the snapshot |
+| Frame pacing before and after churn | about 43 fps and about 44 fps (software rendering on a loaded host) |
+| Remount geometries | 72 on every return after the first |
+| Remount JS heap | about 168 to 182 MB after the first return, with no upward trend (the first return read 372 MB before a collection) |
+
+These are single-run, software-rendered observations on a shared host, not a floor or a typical rate. Real GPUs, other browsers and physical touch devices are not covered. Heap readings are not collected before they are sampled, so they swing; only the counts are checked.

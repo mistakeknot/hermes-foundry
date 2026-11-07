@@ -769,6 +769,68 @@ def cmd_perf(a):
     return 0 if not failures else 1
 
 
+def soak_verdict(res):
+    """Invariants of the soak. Only things that must hold: no resource left behind, touch does what the mouse does. Frame rate and heap
+    are recorded but never judged (software rendering on a shared host; the JS heap is garbage-collected on its own schedule)."""
+    bad = []
+    c = res.get("churn")
+    if not isinstance(c, dict): bad.append("churn did not run")
+    else:
+        for k in ("after_restore", "after_unchanged"):
+            for f in ("geometries", "textures", "objects", "labels", "canvases"):
+                if c.get(k, {}).get(f) != c.get("start", {}).get(f): bad.append(f"churn: {f} {c.get(k, {}).get(f)} after {k} vs {c.get('start', {}).get(f)} at start")
+        if any(m.get("canvases") != 1 for m in c.get("marks", [])): bad.append("churn: more than one canvas during the soak")
+    t = res.get("touch")
+    if not isinstance(t, dict): bad.append("touch did not run")
+    else:
+        if t.get("touch_action") != "none": bad.append(f"touch: canvas touch-action is {t.get('touch_action')!r}, not 'none'")
+        if not t.get("tap_targets"): bad.append("touch: no card to tap")
+        for x in t.get("taps", []):
+            if x.get("selected") != x.get("want") or not x.get("panel"): bad.append(f"touch: tap on {x.get('want')} selected {x.get('selected')} (panel shown: {x.get('panel')})")
+        for k in ("orbit_moved", "pinch_dist_changed", "selection_kept_after_pinch"):
+            if t.get(k) is not True: bad.append(f"touch: {k} is {t.get(k)!r}" + (f" ({t.get(k.split('_')[0] + '_err')})" if t.get(k.split('_')[0] + '_err') else ""))
+    m = res.get("remount")
+    if not isinstance(m, list) or len(m) < 2: bad.append("remount did not run")
+    else:
+        geo = None
+        for x in m[1:]:
+            a, n = x.get("away", {}), x.get("cycle")
+            if a.get("old_disposed") is not True or a.get("old_context_lost") is not True: bad.append(f"remount {n}: old scene disposed={a.get('old_disposed')} context lost={a.get('old_context_lost')}")
+            if a.get("labels") != 0: bad.append(f"remount {n}: {a.get('labels')} label(s) left in the page while away")
+            if not x.get("new_scene") or x.get("canvases") != 1: bad.append(f"remount {n}: new scene={x.get('new_scene')} canvases={x.get('canvases')}")
+            geo = x.get("geometries") if geo is None else geo
+            if x.get("geometries") != geo: bad.append(f"remount {n}: geometries {x.get('geometries')} vs {geo} after the first return")
+    return bad
+
+
+def cmd_soak(a):
+    """Long-session checks in live mode: a status-churn soak (--updates), touch input, and --cycles remounts. Records numbers; judges invariants only."""
+    res = {}; failures = []; stop = None; load0 = os.getloadavg()
+    try:
+        spec = {"default": a.cards} if a.cards <= 30 else {"default": a.cards // 2, "alpha": a.cards // 4, "beta": a.cards - a.cards // 2 - a.cards // 4}
+        with session(a, live=True, boards=spec) as (st, b):
+            signin(b, st); open_pane(b); time.sleep(2)
+            res["churn"] = b.run(js("soak_churn.js", N=a.updates), 120); print("churn", redact(json.dumps(res["churn"]))[:600], flush=True)
+            res["touch"] = b.run(js("soak_touch.js"), 90); print("touch", redact(json.dumps(res["touch"]))[:600], flush=True)
+            res["remount"] = [dict(cycle=0, **b.run(js("soak_remount.js", STAGE="probe"), 30))]
+            for i in range(1, a.cycles + 1):
+                away = b.run(js("soak_remount.js", STAGE="away"), 30); time.sleep(1.5)
+                mid = b.run(js("soak_remount.js", STAGE="mid"), 30)
+                b.run(js("soak_remount.js", STAGE="back"), 30); time.sleep(3)
+                r = b.run(js("soak_remount.js", STAGE="probe"), 30); r.update(cycle=i, away=dict(mid, **away))
+                res["remount"].append(r); print("remount", i, redact(json.dumps(r))[:300], flush=True)
+        failures = soak_verdict(res)
+    except BaseException as e:
+        failures.append("harness error: " + redact(repr(e))[:300])
+        if not isinstance(e, Exception): stop = e
+    write_evidence(os.path.join(OUT, "soak.json"), {"pass": not failures, "failures": failures, "load_at_start": load0, "cpus": os.cpu_count(), "cards": a.cards,
+                   "note": "headless Chromium, software WebGL (SwiftShader), no GPU; counts are judged, frame rate and heap are not", "results": res, "repo_head": head()})
+    for f in failures: print("FAIL " + f)
+    print("SOAK " + ("PASS" if not failures else "FAIL"))
+    if stop: raise stop
+    return 0 if not failures else 1
+
+
 def cmd_selftest(a):
     """Offline checks of the pure parts: redaction, confinement, process ownership, checklist verdict."""
     bad = []
@@ -811,6 +873,19 @@ def cmd_selftest(a):
     r, s2 = good(); s2[4]["ok"] = False; t("verdict fails on a DB mismatch", bool(checklist_verdict(r, plan, floor, s2)))
     r, s2 = good(); r["board"].pop(); t("verdict fails on a missing trial", bool(checklist_verdict(r, plan, floor, s2)))
     r, s2 = good(); t("verdict fails without the floor", bool(checklist_verdict(r, plan, None, s2)))
+    def sk():
+        z = {"geometries": 74, "textures": 0, "objects": 110, "labels": 11, "canvases": 1}
+        rm = lambda n: {"cycle": n, "new_scene": True, "canvases": 1, "geometries": 72, "away": {"old_disposed": True, "old_context_lost": True, "labels": 0}}
+        return {"churn": {"start": dict(z), "after_restore": dict(z), "after_unchanged": dict(z), "marks": [{"canvases": 1}]},
+                "touch": {"touch_action": "none", "tap_targets": 1, "taps": [{"want": "c", "selected": "c", "panel": True}], "orbit_moved": True, "pinch_dist_changed": True, "selection_kept_after_pinch": True},
+                "remount": [{"cycle": 0}, rm(1), rm(2)]}
+    t("soak verdict passes a clean run", soak_verdict(sk()) == [])
+    r = sk(); r["churn"]["after_restore"]["geometries"] = 75; t("soak verdict fails a leaked geometry", bool(soak_verdict(r)))
+    r = sk(); r["remount"][2]["away"]["old_context_lost"] = False; t("soak verdict fails a context left alive", bool(soak_verdict(r)))
+    r = sk(); r["remount"][2]["geometries"] = 90; t("soak verdict fails geometry growth across remounts", bool(soak_verdict(r)))
+    r = sk(); r["touch"]["taps"][0]["selected"] = None; t("soak verdict fails a tap that selects nothing", bool(soak_verdict(r)))
+    r = sk(); r["touch"]["touch_action"] = "auto"; t("soak verdict fails a canvas that scrolls the page", bool(soak_verdict(r)))
+    r = sk(); del r["touch"]; t("soak verdict fails a missing section", bool(soak_verdict(r)))
     # screenshot names and modes cannot reach outside OUT
     for m in ("../x", "/abs", "fixture,../x", "live,live", "", "fixture/", "Live"):
         try:
@@ -921,8 +996,9 @@ def _term(sig, frame):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for n in ("install", "checklist", "perf", "shots"):
+    for n in ("install", "checklist", "perf", "shots", "soak"):
         p = sub.add_parser(n); p.add_argument("--keep", action="store_true"); p.add_argument("--cards", type=int, default=110)
+        if n == "soak": p.add_argument("--updates", type=int, default=200); p.add_argument("--cycles", type=int, default=6)
     sub.add_parser("verdict").add_argument("path")
     sub.add_parser("selftest")
     a = ap.parse_args()
