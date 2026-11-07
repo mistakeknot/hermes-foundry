@@ -25,7 +25,7 @@ A thread has no "done" of its own, so the status is a reading, in this order:
 6. anything else → **open**
 
 Archived and hidden threads are not drawn, and a project with no drawn thread has no board. At most 240 cards are drawn;
-working and waiting threads always make the cut, then the most recently touched.
+working and waiting threads are taken first, then the most recently touched.
 
 ## Command buttons
 
@@ -46,9 +46,19 @@ npm run build      # writes dist/ (bb plugin build)
 
 ## Install
 
-Installing changes the running bb, so do it on purpose, not from a script. `bb plugin install --help` lists the exact form for
-your bb version; build first, then install the built `aleph/` folder. A bb restart may be needed before the nav entry
-appears. To remove it, uninstall the plugin by its name (`bb-plugin-foundry`) with `bb plugin` and restart bb.
+Installing changes the running bb, so do it on purpose, not from a script. `bb plugin install` accepts a local path, so build
+first, then install the `aleph/` folder:
+
+```
+cd aleph && npm install && npm run build
+bb plugin install /path/to/aleph
+bb plugin list            # shows the plugin id
+```
+
+A local path source stays on disk and can be re-read with `bb plugin reload <id>` after a rebuild (or `bb plugin dev` while
+editing), so a restart should not be needed; this was read from `bb plugin --help` and has not been tried here. To turn it off,
+use `bb plugin disable <id>`; to remove it, `bb plugin uninstall <id>` (this deletes the plugin's settings, and leaves the
+folder on disk).
 
 ## Why the Hermes plugin is untouched
 

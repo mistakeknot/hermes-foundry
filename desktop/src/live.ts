@@ -28,7 +28,7 @@ export interface LiveThread {
 export interface LiveInput { projects: LiveProject[]; sections: LiveSection[]; threads: LiveThread[]; now: number }
 
 export interface LiveOptions {
-  /** most cards drawn in all; working and waiting threads always make the cut (default 240) */
+  /** most cards drawn in all; working and waiting threads are taken first (default 240) */
   maxCards?: number
   /** an idle thread untouched this long is shown as done (default 24h) */
   doneAfterMs?: number
