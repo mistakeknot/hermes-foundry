@@ -179,18 +179,33 @@ see `scripts/rehearsal/README.md`) measured 46 to 54 fps at 30 and 110 cards, so
 results are not, and that is a single run, so this README makes no claim about a minimum or typical frame rate. Nothing has
 been measured on a real GPU.
 
+One hand run on a real GPU (packaged Hermes Desktop on an Apple M5 Max, WebGL2 through ANGLE/Metal, 2026-11-06, fixture
+mode) drew the pane with 3 creatures, 40 cards and 4 climbers at a median frame time of 8.3 ms (95th percentile 9.0 ms).
+That is one machine and one run, left no receipt in this repository, and does not cover live mode. Hermes Desktop turns
+the GPU off when it is launched over SSH (an `SSH_*` variable in its environment); set `HERMES_DESKTOP_DISABLE_GPU=0` to
+override that when testing remotely.
+
+## Sound
+
+Sound is off by default. The `sound off` / `sound on` chip in the pane header turns it on, and the choice is kept in
+`localStorage` under `foundry.sound`. Four short cues are synthesised live with WebAudio oscillators: assign, stand,
+the climber's slip, and a card newly becoming blocked. There are no audio files, no network requests and nothing to
+license. Cues are quiet, the same cue is not replayed within 400 ms, and no audio context exists until sound is turned on.
+
 ## Known limits
 
 What the tests cover is stated apart from what was run by hand (hand runs were done in November 2026 and leave no
 receipt in this repository).
 
-- **Real WebGL and GPU are untested.** Nothing has been run on a real GPU; see Performance.
+- **Real-GPU coverage is one hand run.** WebGL2 was measured once on one Apple GPU in fixture mode (see Performance);
+  nothing else is claimed. Pane heights of 500 to 535 px were not measured in the real app.
 - **Live mode needs a newer Hermes.** By hand, Hermes 0.16.0 (2026.6.5) lacks the kanban modules, so live mode answers
   503 there. The live tests (skipped unless `FOUNDRY_HERMES_SRC` points at a Hermes with the kanban modules) were run
   by hand against Hermes main at commit 90d6b98f (2026-11-05) and passed. Live mode has not been run end to end
   through a real dispatcher with a worker picking up an assigned card.
 - **The pane inside a real Hermes Desktop is not exercised by the install gate.** The unit tests cover the pane in
-  jsdom; separate hand runs drove it in headless Chromium. The desktop half is opt-in and, on some builds, only
+  jsdom; separate hand runs drove it in headless Chromium, and one hand run opened it in a packaged Hermes Desktop
+  (nav entry "Foundry", route `#/foundry`) with no CSP or console error from Foundry. The desktop half is opt-in and, on some builds, only
   reachable through the browser-storage setting above.
 - **No per-worker transcript, message or pause in live mode.** Stock Hermes has no kanban hook for them, so they are
   fixture-only and labelled `simulated`.

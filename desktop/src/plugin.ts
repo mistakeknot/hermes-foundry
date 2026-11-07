@@ -10,6 +10,7 @@ import { startSync, type SyncHandle } from './sync'
 import { findCard } from './reducer'
 import { knownStatus } from './status-look'
 import { dropUi, type AssignRequest } from './drag'
+import { createAudio, type FoundryAudio } from './audio'
 import type { Card, Command, FoundryApi, PaneState, TranscriptReply, Worker } from './types'
 
 type Child = unknown
@@ -77,6 +78,12 @@ function FoundryPage({ rest }: { rest: Rest }) {
   const [tip, setTip] = useState<{ label: string; x: number; y: number } | null>(null)
   const [notice, setNotice] = useState<{ text: string; err: boolean; sim: boolean } | null>(null)
   const [webgl, setWebgl] = useState(true)
+  // optional cues: off until the user turns sound on; the context is made by that click and closed on unmount
+  const audioRef = useRef<FoundryAudio | null>(null)
+  if (!audioRef.current) audioRef.current = createAudio()
+  const [sound, setSound] = useState(() => audioRef.current!.enabled())
+  useEffect(() => () => audioRef.current?.dispose(), [])
+  const toggleSound = () => { const a = audioRef.current!; a.setEnabled(!a.enabled()); setSound(a.enabled()) }
   // set by dropping a climber on a scale: opens that card's profile selector. Carries no profile and no command.
   const [assignReq, setAssignReq] = useState<AssignRequest | null>(null)
   const snapRef = useRef<PaneState['snap'] | null>(null)
@@ -118,6 +125,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
           const r = host.getBoundingClientRect()
           setTip(label ? { label, x: x - r.left + 12, y: y - r.top + 12 } : null)
         },
+        onSlip: () => audioRef.current?.play('slip'),
         onDrop: (req) => {
           const sn = snapRef.current
           const ui = sn ? dropUi(req, sn) : null
@@ -140,6 +148,16 @@ function FoundryPage({ rest }: { rest: Rest }) {
 
   const snap = state?.snap ?? null
   snapRef.current = snap
+  // blocked glow cue: only for a card that was not blocked in the previous snapshot (never on the first load)
+  const blockedRef = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    if (!snap) return
+    const now = new Set<string>()
+    snap.projects.forEach((p) => p.cards.forEach((c) => { if (c.status === 'blocked') now.add(c.id) }))
+    const prev = blockedRef.current
+    blockedRef.current = now
+    if (prev && [...now].some((id) => !prev.has(id))) audioRef.current?.play('blocked')
+  }, [snap])
   useEffect(() => { if (snap) sceneRef.current?.update(snap) }, [snap])
   useEffect(() => {
     const s = sceneRef.current
@@ -191,7 +209,11 @@ function FoundryPage({ rest }: { rest: Rest }) {
         if (cur && e.match(cur)) release(guarded)
       }
     }
-    if (r.ok) syncRef.current?.poll() // the upsert / comment_added events arrive on the next poll
+    if (r.ok) {
+      if (c.type === 'assign') audioRef.current?.play('assign')
+      else if (c.type === 'stand' && c.on) audioRef.current?.play('stand')
+      syncRef.current?.poll() // the upsert / comment_added events arrive on the next poll
+    }
     return r.ok
   }
 
@@ -205,6 +227,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
     h('div', { style: { font: `600 14px ${sans}`, color: ON_DARK, textShadow: '0 1px 3px #000' } }, 'Foundry'),
     simulated ? h('span', { id: 'foundry-simulated', style: { ...chip('#e6a93c'), pointerEvents: 'auto' }, title: 'Showing fixture data; actions do not reach a live Hermes board' }, 'simulated') : null,
     snap?.paused ? h('span', { style: chip('#6fd3ff') }, 'standing') : null,
+    h('button', { id: 'foundry-sound', type: 'button', 'aria-pressed': sound, title: sound ? 'Turn the small sound cues off' : 'Turn on small sound cues (assign, stand, slip, blocked)', onClick: toggleSound, style: { ...chip(sound ? '#9fd8a0' : '#5a655d'), border: 0, cursor: 'pointer', pointerEvents: 'auto', color: sound ? '#16160f' : ON_DARK } }, sound ? 'sound on' : 'sound off'),
     link === 'error' ? h('span', { style: chip(hex(STATUS_COLOR.blocked)) }, 'reconnecting') : null,
     h('div', { style: { marginLeft: 'auto', display: 'flex', gap: narrow ? 7 : 10, font: `${narrow ? 10 : 11}px ${sans}`, color: ON_DARK_MUTED, textShadow: '0 1px 3px #000' } },
       (['open', 'running', 'blocked', 'review', 'done'] as const).map((k) => h('span', { key: k, style: { display: 'inline-flex', gap: 4, alignItems: 'center' } },

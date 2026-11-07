@@ -494,3 +494,96 @@ describe('short pane: the Comment box', () => {
     expect((await dockWithPaneHeight(376)).style.position).not.toBe('sticky')
   })
 })
+
+describe('sound cues in the pane', () => {
+  function stubAudio() {
+    const made: any[] = []
+    const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} })
+    ;(globalThis as any).AudioContext = class {
+      currentTime = 0; destination = {}; state = 'running'; oscs = 0
+      constructor() { made.push(this) }
+      createOscillator() { this.oscs++; return { type: '', frequency: param(), connect() {}, disconnect() {}, start() {}, stop() {}, onended: null } }
+      createGain() { return { gain: param(), connect() {}, disconnect() {} } }
+      resume() { return Promise.resolve() }
+      close() { (this as any).closed = true; return Promise.resolve() }
+    }
+    return made
+  }
+  const store: Record<string, string> = {}
+  beforeAll(() => {
+    ;(globalThis as any).localStorage = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v }, removeItem: (k: string) => { delete store[k] } }
+  })
+  afterEach(() => { delete (globalThis as any).AudioContext; for (const k of Object.keys(store)) delete store[k] })
+
+  it('is off by default (no AudioContext made); the toggle turns it on, and a successful assign then plays a cue', async () => {
+    const made = stubAudio()
+    const fx = await new MockApi(Date.now, 3_600_000).snapshot()
+    const card = fx.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
+    const scene = await mount(() => Promise.reject(new Error('no router')))
+    await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+    const btn = document.getElementById('foundry-sound') as HTMLButtonElement
+    expect(btn.textContent).toBe('sound off')
+    expect(btn.getAttribute('aria-pressed')).toBe('false')
+    expect(made.length).toBe(0)
+
+    await act(async () => { btn.click() })
+    expect(btn.textContent).toBe('sound on')
+    expect(made.length).toBe(1)
+    expect(store['foundry.sound']).toBe('1')
+    const before = made[0].oscs
+    await dragOnto(scene, fx.workers[0].id, card.id)
+    await waitFor(() => !!document.getElementById('foundry-profile'), 'the card panel')
+    FIRST = profileButtons()[0].textContent!
+    expect(made[0].oscs).toBe(before) // opening the selector is silent
+    await pressAssign('reviewer')
+    await tick()
+    expect(made[0].oscs).toBeGreaterThan(before) // the successful assign sounds
+
+    await act(async () => { root!.unmount() }); root = null
+    expect(made[0].closed).toBe(true)
+  })
+
+  it('plays the stand cue when Stand is pressed on a worker', async () => {
+    const made = stubAudio()
+    store['foundry.sound'] = '1'
+    const fx = await new MockApi(Date.now, 3_600_000).snapshot()
+    const scene = await mount(() => Promise.reject(new Error('no router')))
+    await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+    expect((document.getElementById('foundry-sound') as HTMLButtonElement).textContent).toBe('sound on') // the stored choice is honoured
+    await act(async () => { scene.cb.onPick({ kind: 'worker', id: fx.workers[0].id }) })
+    const stand = () => Array.from(document.querySelectorAll('#foundry-panel button')).find((b) => b.textContent === 'Stand') as HTMLButtonElement | undefined
+    await waitFor(() => !!stand(), 'the Stand button')
+    const before = made.reduce((n, c) => n + c.oscs, 0)
+    await act(async () => { stand()!.click() })
+    await tick()
+    expect(made.reduce((n, c) => n + c.oscs, 0)).toBeGreaterThan(before)
+  })
+
+  it('plays the blocked cue only when a card newly becomes blocked, never on first load', async () => {
+    const made = stubAudio()
+    store['foundry.sound'] = '1'
+    const base = await new MockApi(Date.now, 3_600_000).snapshot()
+    const snap = { ...base, mode: 'live' as const, last_seq: 5, cursor: '5' }
+    const victim = snap.projects.flatMap((p) => p.cards).find((c) => c.status !== 'blocked')!
+    let phase = 0
+    const rest: Rest = async (path) => {
+      if (path.startsWith('/snapshot')) return snap
+      if (path.startsWith('/events')) {
+        const events = phase === 1 ? [{ seq: 6, ts: 't', type: 'card_upsert', payload: { card: { ...victim, status: 'blocked', status_native: 'blocked' } } }] : []
+        const r = { v: 1, epoch: snap.epoch, cursor: phase === 1 ? '6' : '5', events, resync: false }
+        if (phase === 1) phase = 2
+        return r
+      }
+      return {}
+    }
+    await mount(rest)
+    await waitFor(() => !document.getElementById('foundry-simulated') && !!document.getElementById('foundry-sound'), 'the live pane')
+    expect((document.getElementById('foundry-sound') as HTMLButtonElement).textContent).toBe('sound on')
+    expect(made.reduce((n, c) => n + c.oscs, 0)).toBe(0) // blocked cards already on the board make no sound at first load
+    phase = 1
+    // live polling runs every 2 s, longer than waitFor's window
+    for (let i = 0; i < 250 && made.reduce((n, c) => n + c.oscs, 0) === 0; i++) await tick()
+    expect(made.reduce((n, c) => n + c.oscs, 0)).toBeGreaterThan(0)
+    expect(phase).toBe(2)
+  })
+})
