@@ -73,7 +73,7 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
 - **`selftest` is confined too.** It needs `BB_THREAD_STORAGE`, makes its scratch directory inside its own run directory
   (not the system temp dir) and removes that run directory when it ends.
 
-## Soak: what it judges, and one measured run
+## Soak: what it judges, and two measured runs
 
 `soak` judges **invariants only**; frame rate and JS heap are recorded and never judged. It sets `HERMES_HOME` to its own scratch home like the other subcommands.
 
@@ -86,7 +86,7 @@ Two runs on 2026-11-06 (the first on main `65ebf66` plus this harness, 110 cards
 | Measure | Value |
 | --- | --- |
 | `scene.update()` with one status change | median 4.4 to 4.7 ms, p95 7.9 to 8.6 ms, max 14 ms |
-| `scene.update()` with nothing changed | median 1.9 ms, max 8.1 ms |
+| `scene.update()` with nothing changed | median 1.9 ms in the first run, 1.8 ms in the second, max 8.1 ms |
 | Geometries during churn | 73 or 74 at start (74 in the first run, 73 in the second, same code), 97 to 105 while statuses are spread across more bands, back to the start count after restoring the snapshot |
 | Frame pacing before and after churn | about 46 and 43 fps in the first run, about 46 and 40 in the second (software rendering on a loaded host) |
 | Remount geometries | 74 in the first run and 73 in the second, constant across the returns after the first within each run |

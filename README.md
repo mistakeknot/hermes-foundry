@@ -203,12 +203,13 @@ and `docs/plan.md`.
 
 These are observations, not guarantees. In maintainers' hand runs in November 2026, headless Chromium with software WebGL
 (SwiftShader) ran the pane at roughly 29 to 48 frames per second, depending on card count and how busy the host was; those
-runs left no recorded measurements. Two runs of the rehearsal harness (`scripts/rehearsal/rehearse.py perf`, 2026-11-06,
-see `scripts/rehearsal/README.md`) differed. The first measured 46 to 54 fps at 30 and 110 cards, software-rendered, with the host under load
-(load average 10 to 16 on 32 cores, above the harness's own 0.2-per-core threshold). The second, a later rehearsal at the same
-code with the host busier (load average 15 to 23), measured 48 to 50 fps at 30 cards and 29 to 37 fps at 110 cards. The harness is committed but its
-results are not, and these are two runs, so this README makes no claim about a minimum or typical frame rate. Those
-software-rendered runs measured no real GPU; the one real-GPU hand run is described next.
+runs left no recorded measurements. Two runs of the rehearsal harness (`scripts/rehearsal/rehearse.py perf`, 2026-11-06, see `scripts/rehearsal/README.md`)
+differed. The first measured 46 to 54 fps at 30 and 110 cards, software-rendered, with the host under load (load average 10
+to 16 on 32 cores, above the harness's own 0.2-per-core threshold). The second, a later rehearsal at the same code with the
+host busier (load average 15 to 25), measured 48 to 50 fps at 30 cards and 29 to 37 fps at 110 cards. The harness is
+committed but its results are not, and these are two runs, so this README makes no claim about a minimum or typical frame
+rate.
+Those software-rendered runs measured no real GPU; the one real-GPU hand run is described next.
 
 One hand run on a real GPU (packaged Hermes Desktop on an Apple M5 Max, WebGL2 through ANGLE/Metal, 2026-11-06, fixture
 mode) drew the pane with 3 creatures, 40 cards and 4 climbers at a median frame time of 8.3 ms (95th percentile 9.0 ms).
