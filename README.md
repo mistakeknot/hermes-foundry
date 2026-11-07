@@ -1,9 +1,11 @@
 # hermes-foundry
 
-**Foundry is a 3D workspace for seeing and operating the software factory in Hermes.** Each kanban board is a
-creature in a valley, each card is a scale coloured by its status, and each running worker is a climber sitting on the
-card it holds. You fly around, click a scale to open its card, and change its status, assign a profile or comment on
-it, from inside the Hermes desktop app. It is a hackathon entry. Private until mk publishes.
+**Foundry runs inside Hermes Desktop, and the work is the world.** It turns the software factory in Hermes into a 3D
+valley of creatures and scales, not agents at desks: each kanban board is a creature, each card is a scale coloured by
+its status, and each running worker is a climber sitting on the card it holds. You operate cards from the scene. Drag a
+climber onto a scale to assign it (you pick the profile), stand the whole factory to pause it, and watch a worker that
+loops slip down its scale and catch a new hold. Click a scale to open its card, change its status or comment on it.
+Stand and slip are fixture-only; see [Modes](#modes). It is a hackathon entry. Private until mk publishes.
 
 It ships as one Hermes plugin with three parts:
 
@@ -13,6 +15,28 @@ It ships as one Hermes plugin with three parts:
 
 By default it runs against a built-in **fixture**: a scripted factory that makes no model call and needs no kanban
 data, so you can try it on any Hermes. Live mode drives the real Hermes kanban (see [Modes](#modes) for what it needs).
+
+## Related work
+
+Other projects give Hermes agents a place on screen. These are the neighbours we found; descriptions are from each
+project's own README or repository description, and Foundry makes no claim to be the first 3D Hermes workspace.
+
+- [oslook/hermes-desktop-plugin-office-3d](https://github.com/oslook/hermes-desktop-plugin-office-3d): a live
+  isometric 3D office for Hermes Desktop, built on the Desktop Plugin SDK. Every profile is a person at a desk, busy,
+  idle or offline, with real session, token and cost stats.
+- [JuniorXcoder/hermes-virtual-office](https://github.com/JuniorXcoder/hermes-virtual-office): a 3D office for an
+  agent fleet, with desks per division, meetings and a Kanban board synced to Hermes. Next.js and three.js, driven by
+  the `hermes` CLI.
+- [iamlukethedev/Hermes3D](https://github.com/iamlukethedev/Hermes3D): a self-hosted 3D virtual office for AI agents
+  with a Hermes gateway adapter.
+- [ap08960695/hermes-quest](https://github.com/ap08960695/hermes-quest): a read-only pixel-art RPG dashboard that turns
+  Hermes kanban activity into a game world (heroes, monsters, fights). A different project from
+  [nemoaigc/hermes-quest](https://github.com/nemoaigc/hermes-quest), which steers an agent's learning through an RPG
+  layer.
+
+What Foundry does differently: the scene is a metaphor for the work (boards and cards), not a place for agents to sit,
+and it is operable, not only a view. Live assignment uses Hermes' own `assign_task`; Foundry does not claim or start the
+card, though Hermes may start it once assigned.
 
 ## Install and run
 
