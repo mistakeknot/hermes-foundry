@@ -1,0 +1,33 @@
+{
+  "name": "bb-plugin-foundry",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Foundry for Aleph/bb: a 3D board of your bb projects and threads",
+  "engines": { "bb": ">=0.48", "bbPluginSdk": ">=0.6.132" },
+  "bb": {
+    "name": "Foundry",
+    "description": "A 3D board of your projects (boards) and threads (cards); working threads climb. Read-only.",
+    "branding": { "icon": "Mountain" },
+    "server": "./server.ts",
+    "app": "./app.tsx"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "bb plugin build"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.132",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/three": "^0.170.0",
+    "esbuild": "^0.25.0",
+    "jsdom": "^25.0.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "three": "^0.170.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

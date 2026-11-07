@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@hermes/plugin-sdk": [
+        "../desktop/src/hermes-sdk-shim.ts"
+      ],
+      "react": [
+        "./node_modules/@types/react"
+      ],
+      "react/jsx-runtime": [
+        "./src/jsx-runtime-loose.d.ts"
+      ]
+    },
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "server.ts",
+    "app.tsx",
+    "src",
+    "test"
+  ]
+}

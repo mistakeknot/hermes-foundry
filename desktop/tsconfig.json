@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler", "lib": ["ES2022", "DOM"],
     "strict": true, "noEmit": true, "skipLibCheck": true, "esModuleInterop": true, "jsx": "preserve",
-    "types": [], "baseUrl": ".", "paths": { "@hermes/plugin-sdk": ["src/sdk.d.ts"] }
+    "types": [], "baseUrl": ".", "paths": { "@hermes/plugin-sdk": ["src/hermes-sdk-shim.ts"] }
   },
   "include": ["src", "test"]
 }

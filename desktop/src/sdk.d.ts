@@ -1,13 +1,5 @@
-// Minimal ambient declarations for the host-provided modules (rewritten to shims at runtime by Hermes).
-declare module '@hermes/plugin-sdk' {
-  export const ROUTES_AREA: string
-  export const SIDEBAR_NAV_AREA: string
-  export const host: unknown
-  export interface PluginContext {
-    register(c: { id: string; area: string; order?: number; data?: Record<string, unknown>; render?: () => unknown }): void
-    rest<T>(path: string, opts?: { method?: string; body?: unknown; timeoutMs?: number }): Promise<T>
-  }
-}
+// Minimal ambient declarations for the host-provided react modules (rewritten to shims at runtime by Hermes).
+// @hermes/plugin-sdk is a real module: see hermes-sdk-shim.ts.
 declare module 'react' {
   export function useEffect(f: () => void | (() => void), deps?: unknown[]): void
   export function useLayoutEffect(f: () => void | (() => void), deps?: unknown[]): void
