@@ -34,6 +34,8 @@ export interface SceneCallbacks {
   onHover(label: string | null, x: number, y: number): void
   /** A climber was dropped on a scale. The pane opens the card's profile selector; nothing is claimed or assigned. */
   onDrop?(req: AssignRequest): void
+  /** A looping climber started a slip (the first frame of the slide). Drives the optional slip cue; carries no data. */
+  onSlip?(): void
 }
 
 /** Scales are drawn only when a creature is close enough, once the valley is crowded (legibility past ~100 cards). */
@@ -83,6 +85,8 @@ interface ClimberView {
   phase: number
   worker: Worker
   cardId: string | null
+  /** Was the climber mid-slip on the previous frame? Edge-detects the start of a slip for the audio cue. */
+  slipping?: boolean
 }
 
 export class FoundryScene {
@@ -615,9 +619,14 @@ export class FoundryScene {
       if (d.length() > 1e-3) c.pos.add(d.normalize().multiplyScalar(step))
       const moving = c.pos.distanceTo(goal) > 0.05
       let y = 0, ox = 0, oz = 0, roll = 0
+      if (w.state !== 'looping') c.slipping = false
       if (moving) y = Math.abs(Math.sin(t * 9 + c.phase)) * 0.25 // scrambling
       else if (w.state === 'working') { y = Math.abs(Math.sin(t * 4 + c.phase)) * 0.08; ox = Math.sin(t * 3 + c.phase) * 0.05 }
-      else if (w.state === 'looping' && c.cardId) { const s = slipPose(t, c.phase); ox = s.ox; oz = s.oz; y = s.oy; roll = s.roll }
+      else if (w.state === 'looping' && c.cardId) {
+        const s = slipPose(t, c.phase); ox = s.ox; oz = s.oz; y = s.oy; roll = s.roll
+        if (s.slipping && !c.slipping) this.cb.onSlip?.()
+        c.slipping = s.slipping
+      }
       else if (w.state === 'waiting_human') { y = 0 }
       c.mesh.position.set(c.pos.x + ox, Math.max(c.pos.y + y + 0.25, 0.1), c.pos.z + oz)
       c.mesh.rotation.z = roll

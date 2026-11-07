@@ -1,9 +1,11 @@
 # hermes-foundry
 
-**Foundry is a 3D workspace for seeing and operating the software factory in Hermes.** Each kanban board is a
-creature in a valley, each card is a scale coloured by its status, and each running worker is a climber sitting on the
-card it holds. You fly around, click a scale to open its card, and change its status, assign a profile or comment on
-it, from inside the Hermes desktop app. It is a hackathon entry. Private until mk publishes.
+**Foundry runs inside Hermes Desktop, and the work is the world.** It turns the software factory in Hermes into a 3D
+valley of creatures and scales, not agents at desks: each kanban board is a creature, each card is a scale coloured by
+its status, and each running worker is a climber sitting on the card it holds. You operate cards from the scene. Drag a
+climber onto a scale to assign it (you pick the profile), stand the whole factory to pause it, and watch a worker that
+loops slip down its scale and catch a new hold. Click a scale to open its card, change its status or comment on it.
+Stand and slip are fixture-only; see [Modes](#modes). It is a hackathon entry. Private until mk publishes.
 
 It ships as one Hermes plugin with three parts:
 
@@ -13,6 +15,28 @@ It ships as one Hermes plugin with three parts:
 
 By default it runs against a built-in **fixture**: a scripted factory that makes no model call and needs no kanban
 data, so you can try it on any Hermes. Live mode drives the real Hermes kanban (see [Modes](#modes) for what it needs).
+
+## Related work
+
+Other projects give Hermes agents a place on screen. These are the neighbours we found; descriptions are from each
+project's own README or repository description, and Foundry makes no claim to be the first 3D Hermes workspace.
+
+- [oslook/hermes-desktop-plugin-office-3d](https://github.com/oslook/hermes-desktop-plugin-office-3d): a live
+  isometric 3D office for Hermes Desktop, built on the Desktop Plugin SDK. Every profile is a person at a desk, busy,
+  idle or offline, with real session, token and cost stats.
+- [JuniorXcoder/hermes-virtual-office](https://github.com/JuniorXcoder/hermes-virtual-office): a 3D office for an
+  agent fleet, with desks per division, meetings and a Kanban board synced to Hermes. Next.js and three.js, driven by
+  the `hermes` CLI.
+- [iamlukethedev/Hermes3D](https://github.com/iamlukethedev/Hermes3D): a self-hosted 3D virtual office for AI agents
+  with a Hermes gateway adapter.
+- [ap08960695/hermes-quest](https://github.com/ap08960695/hermes-quest): a read-only pixel-art RPG dashboard that turns
+  Hermes kanban activity into a game world (heroes, monsters, fights). A different project from
+  [nemoaigc/hermes-quest](https://github.com/nemoaigc/hermes-quest), which steers an agent's learning through an RPG
+  layer.
+
+What Foundry does differently: the scene is a metaphor for the work (boards and cards), not a place for agents to sit,
+and it is operable, not only a view. Live assignment uses Hermes' own `assign_task`; Foundry does not claim or start the
+card, though Hermes may start it once assigned.
 
 ## Install and run
 
@@ -182,15 +206,33 @@ These are observations, not guarantees. In maintainers' hand runs in November 20
 runs left no recorded measurements. One run of the rehearsal harness (`scripts/rehearsal/rehearse.py perf`, 2026-11-06,
 see `scripts/rehearsal/README.md`) measured 46 to 54 fps at 30 and 110 cards, software-rendered, with the host under load
 (load average 10 to 16 on 32 cores, above the harness's own 0.2-per-core threshold). The harness is committed but its
-results are not, and that is a single run, so this README makes no claim about a minimum or typical frame rate. Nothing has
-been measured on a real GPU.
+results are not, and that is a single run, so this README makes no claim about a minimum or typical frame rate. Those
+software-rendered runs measured no real GPU; the one real-GPU hand run is described next.
+
+One hand run on a real GPU (packaged Hermes Desktop on an Apple M5 Max, WebGL2 through ANGLE/Metal, 2026-11-06, fixture
+mode) drew the pane with 3 creatures, 40 cards and 4 climbers at a median frame time of 8.3 ms (95th percentile 9.0 ms).
+That is one machine and one run, left no receipt in this repository, and does not cover live mode. In that hand run, the
+packaged Hermes Desktop build tested came up with the GPU off when it was launched from an SSH session, and setting
+`HERMES_DESKTOP_DISABLE_GPU=0` in its environment turned it back on. Which `SSH_*` variable triggers this was not
+determined, and the behaviour was not checked on other Hermes versions or platforms.
+
+## Sound
+
+Sound is off by default. The `sound off` / `sound on` chip in the pane header turns it on, and the choice is kept in
+`localStorage` under `foundry.sound`. Four short cues are synthesised live with WebAudio oscillators: assign, stand,
+the climber's slip, and a card newly becoming blocked. There are no audio files, no network requests and nothing to
+license. Cues are quiet, the same cue is not replayed within 400 ms, and no audio context exists until sound is turned on.
+A saved "on" is only a preference: the browser's autoplay rule allows audio to start from a user gesture, so the audio
+context is created only when you click the chip or make the first click or key press in the pane, and cues that arrive
+before that are dropped. The context is closed when the pane closes.
 
 ## Known limits
 
 What the tests cover is stated apart from what was run by hand (hand runs were done in November 2026 and leave no
 receipt in this repository).
 
-- **Real WebGL and GPU are untested.** Nothing has been run on a real GPU; see Performance.
+- **Real-GPU coverage is one hand run.** WebGL2 was measured once on one Apple GPU in fixture mode (see Performance);
+  nothing else is claimed. Pane heights of 500 to 535 px were not measured in the real app.
 - **Live mode needs a newer Hermes.** By hand, Hermes 0.16.0 (2026.6.5) lacks the kanban modules, so live mode answers
   503 there. The live tests (skipped unless `FOUNDRY_HERMES_SRC` points at a Hermes with the kanban modules) were run
   by hand against Hermes main at commit 90d6b98f (2026-11-05) and passed. One end-to-end hand run (2026-11-06,
@@ -199,7 +241,8 @@ receipt in this repository).
   it, and the pane showed ready, running, then done (about 22 s after the click, in that one run). It is one run on
   one commit with a stub model, not a measurement of how long real work takes.
 - **The pane inside a real Hermes Desktop is not exercised by the install gate.** The unit tests cover the pane in
-  jsdom; separate hand runs drove it in headless Chromium. The desktop half is opt-in and, on some builds, only
+  jsdom; separate hand runs drove it in headless Chromium, and one hand run opened it in a packaged Hermes Desktop
+  (nav entry "Foundry", route `#/foundry`) with no CSP or console error from Foundry. The desktop half is opt-in and, on some builds, only
   reachable through the browser-storage setting above.
 - **No per-worker transcript, message or pause in live mode.** Stock Hermes has no kanban hook for them, so they are
   fixture-only and labelled `simulated`.
