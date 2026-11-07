@@ -1,6 +1,6 @@
 # Plan: "Foundry" — a 3D workspace to see and run the software factory in Hermes
 
-Bead: mk-ps6ow. The idea, from the project brief: a 3D workspace to visualize and operate the software factory in Hermes.
+The idea, from the project brief: a 3D workspace to visualize and operate the software factory in Hermes.
 Deadline: Nov 11, 2026, 2 PM PST. Build window: Nov 7 to Nov 10; Nov 11 morning is for the video and submission.
 Name "Foundry" is a placeholder (design choice).
 
