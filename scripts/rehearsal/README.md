@@ -81,15 +81,15 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
 - **Touch.** Through the browser's touchscreen API: taps on exactly three distinct cards each select that card and show the panel; one finger on empty ground orbits; two fingers change the camera distance and keep the selection; the canvas has `touch-action: none`.
 - **Remount.** `--cycles` times: leave the pane (the scene must be disposed, its WebGL context lost, and no canvas or labels left in the page), come back (a new scene, one canvas, a constant geometry count after the first return).
 
-One run on 2026-11-06 (main `7553684`, 110 cards, 200 updates, 6 remounts, headless Chromium on software WebGL, 32 CPUs at load average about 12 to 15): PASS.
+One run on 2026-11-06 (main `65ebf66` plus this harness, 110 cards, 200 updates, 6 remounts, headless Chromium on software WebGL, 32 CPUs at load average about 7 to 13): PASS.
 
 | Measure | Value |
 | --- | --- |
-| `scene.update()` with one status change | median 4.9 ms, p95 9.8 ms, max 24.4 ms |
-| `scene.update()` with nothing changed | median 1.7 ms, max 4.8 ms |
-| Geometries during churn | 72 at start, 97 to 106 while statuses are spread across more bands, 72 again after restoring the snapshot |
-| Frame pacing before and after churn | about 43 fps and about 44 fps (software rendering on a loaded host) |
-| Remount geometries | 72 on every return after the first |
-| Remount JS heap | about 168 to 182 MB after the first return, with no upward trend (the first return read 372 MB before a collection) |
+| `scene.update()` with one status change | median 4.4 ms, p95 7.9 ms, max 14 ms |
+| `scene.update()` with nothing changed | median 1.9 ms, max 8.1 ms |
+| Geometries during churn | 74 at start, 97 to 105 while statuses are spread across more bands, 74 again after restoring the snapshot |
+| Frame pacing before and after churn | about 46 fps and about 43 fps (software rendering on a loaded host) |
+| Remount geometries | 74 on every return after the first |
+| Remount JS heap | about 152 to 184 MB after the first return, not rising steadily (the first return read 383 MB before a collection) |
 
 These are single-run, software-rendered observations on a shared host, not a floor or a typical rate. Real GPUs, other browsers and physical touch devices are not covered. Heap readings are not collected before they are sampled, so they swing; only the counts are checked.
