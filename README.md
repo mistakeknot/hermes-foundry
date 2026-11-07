@@ -218,13 +218,14 @@ determined, and the behaviour was not checked on other Hermes versions or platfo
 
 ## Sound
 
-Sound is off by default. The `sound off` / `sound on` chip in the pane header turns it on, and the choice is kept in
-`localStorage` under `foundry.sound`. Four short cues are synthesised live with WebAudio oscillators: assign, stand,
+Sound is off by default. The `sound off` / `sound on` chip in the pane header turns it on, and the choice is kept, on a
+best-effort basis, in `localStorage` under `foundry.sound` (if the browser refuses the write, the current choice may not be
+restored when the pane reopens). Four short cues are synthesised live with WebAudio oscillators: assign, stand,
 the climber's slip, and a card newly becoming blocked. There are no audio files, no network requests and nothing to
 license. Cues are quiet, the same cue is not replayed within 400 ms, and no audio context exists until sound is turned on.
 A saved "on" is only a preference: the browser's autoplay rule allows audio to start from a user gesture, so the audio
 context is created only when you click the chip or make the first click or key press in the pane, and cues that arrive
-before that are dropped. The context is closed when the pane closes.
+before that are dropped. Audio starts only if the browser permits it; otherwise cues may remain silent. The context is closed when the pane closes, on a best-effort basis.
 
 ## Known limits
 
