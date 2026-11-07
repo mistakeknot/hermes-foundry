@@ -297,8 +297,9 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null; no
     if (!end || !dock || !panel) return
     const room = panel.clientHeight - dock.offsetHeight                       // the visible height the content gets above a pinned dock
     const endY = end.getBoundingClientRect().bottom - panel.getBoundingClientRect().top + panel.scrollTop // where the Assign rows end, at scroll 0
-    // a pinned dock covers the Assign rows at first glance when they end below `room`; flowing it back needs 24 px of slack
-    // so the two layouts never trade places on a one-pixel change
+    // The dock keeps the same box (margin, padding, border) whether it is pinned or flowing; only `position` changes, so
+    // `room` is the same number in both modes and this comparison cannot feed back on itself. A pinned dock covers the Assign
+    // rows at first glance when they end below `room`; flowing it back needs 24 px of slack so a one-pixel change never flips it.
     if (!flowDock && endY > room) setFlowDock(true)
     else if (flowDock && endY < room - 24) setFlowDock(false)
   })
@@ -351,7 +352,7 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null; no
     comments.length ? h('div', null, sect('Comments'), ...comments.map((c, i) => h('div', { key: i, style: { padding: '3px 0', fontSize: 12 } }, h('b', null, c.author), `: ${c.text}`))) : null,
     // The comment box and the result line stay pinned to the bottom of the panel, so a tall card view in a short pane never
     // pushes them below the fold. Negative margins let the pinned block cover the panel's own padding.
-    h('div', { id: 'foundry-comment-dock', ref: dockRef, style: p.pinComment === false || flowDock ? { marginTop: 4 } : { position: 'sticky', bottom: 0, margin: '8px -14px -12px', padding: '0 14px 10px', background: C.card, borderTop: `1px solid ${C.border}` } },
+    h('div', { id: 'foundry-comment-dock', ref: dockRef, style: p.pinComment === false ? { marginTop: 4 } : { position: flowDock ? 'static' : 'sticky', bottom: 0, margin: '8px -14px -12px', padding: '0 14px 10px', background: C.card, borderTop: `1px solid ${C.border}` } },
       sect('Comment'),
       h('div', { style: { ...row, flexDirection: 'column', marginTop: 0 } },
         h('textarea', { id: 'foundry-comment', rows: 2, style: { ...field, resize: 'none' }, value: text, placeholder: 'Write a comment…', onChange: (e: any) => setText(e.target.value) }),
