@@ -1,6 +1,6 @@
 // Foundry desktop pane: /foundry route + sidebar row. Plain-ESM bundle for Hermes; no JSX syntax.
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ROUTES_AREA, SIDEBAR_NAV_AREA } from '@hermes/plugin-sdk'
 import { FoundryScene, STATUS_COLOR, WORKER_COLOR, type Pick } from './scene'
 import { loadUnlessCancelled } from './stale'
@@ -286,6 +286,22 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null; no
   const [profile, setProfile] = useState('') // typed only when no profile is known yet (see the Assign section)
   const [text, setText] = useState('')
   const profileRef = useRef<HTMLElement>(null)
+  // Where the Assign rows end, and the dock itself: measured after every render, because what covers the Assign row depends
+  // on the wrapped title, the chips, the comments and the pane height together, not on the pane height alone.
+  const endRef = useRef<HTMLElement>(null)
+  const dockRef = useRef<HTMLElement>(null)
+  const [flowDock, setFlowDock] = useState(false)
+  useLayoutEffect(() => {
+    const end = endRef.current, dock = dockRef.current
+    const panel = dock?.parentElement?.closest('#foundry-panel') as HTMLElement | null
+    if (!end || !dock || !panel) return
+    const room = panel.clientHeight - dock.offsetHeight                       // the visible height the content gets above a pinned dock
+    const endY = end.getBoundingClientRect().bottom - panel.getBoundingClientRect().top + panel.scrollTop // where the Assign rows end, at scroll 0
+    // a pinned dock covers the Assign rows at first glance when they end below `room`; flowing it back needs 24 px of slack
+    // so the two layouts never trade places on a one-pixel change
+    if (!flowDock && endY > room) setFlowDock(true)
+    else if (flowDock && endY < room - 24) setFlowDock(false)
+  })
   // a climber dropped on this card: focus the profile picker the Assign buttons live in, then forget the request
   useEffect(() => {
     const r = p.assignReq
@@ -307,7 +323,7 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null; no
   const row = { display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }
   return h('div', null,
     backLink(setPick),
-    h('div', { style: { font: `600 15px ${sans}`, lineHeight: 1.25 } }, card.title),
+    h('div', { style: { font: `600 15px ${sans}`, lineHeight: 1.25, overflowWrap: 'anywhere' } }, card.title),
     h('div', { style: { color: C.muted, fontFamily: mono, fontSize: 11, marginTop: 2 } }, card.id),
     h('div', { style: { marginTop: 8, display: 'flex', gap: 6, alignItems: 'center' } },
       h('span', { style: chip(hex(STATUS_COLOR[knownStatus(card.status)])) }, knownStatus(card.status) === 'unknown' ? `unknown · ${card.status_native}` : card.status_native),
@@ -331,10 +347,11 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null; no
         h('input', { id: profiles.length ? 'foundry-profile-new' : 'foundry-profile', ref: profiles.length ? undefined : profileRef, style: { ...field, flex: 1 }, value: profile, placeholder: profiles.length ? 'another profile' : 'profile', onChange: (e: any) => setProfile(e.target.value), onKeyDown: (e: any) => { if (e.key === 'Enter' && !busy && profile.trim()) assign(profile.trim()) } }),
         h('button', { id: 'foundry-assign', style: btn(true), disabled: busy || !profile.trim(), onClick: () => assign(profile.trim()) }, 'Assign'))
       : null,
+    h('div', { ref: endRef, style: { height: 0 } }),
     comments.length ? h('div', null, sect('Comments'), ...comments.map((c, i) => h('div', { key: i, style: { padding: '3px 0', fontSize: 12 } }, h('b', null, c.author), `: ${c.text}`))) : null,
     // The comment box and the result line stay pinned to the bottom of the panel, so a tall card view in a short pane never
     // pushes them below the fold. Negative margins let the pinned block cover the panel's own padding.
-    h('div', { id: 'foundry-comment-dock', style: p.pinComment === false ? { marginTop: 4 } : { position: 'sticky', bottom: 0, margin: '8px -14px -12px', padding: '0 14px 10px', background: C.card, borderTop: `1px solid ${C.border}` } },
+    h('div', { id: 'foundry-comment-dock', ref: dockRef, style: p.pinComment === false || flowDock ? { marginTop: 4 } : { position: 'sticky', bottom: 0, margin: '8px -14px -12px', padding: '0 14px 10px', background: C.card, borderTop: `1px solid ${C.border}` } },
       sect('Comment'),
       h('div', { style: { ...row, flexDirection: 'column', marginTop: 0 } },
         h('textarea', { id: 'foundry-comment', rows: 2, style: { ...field, resize: 'none' }, value: text, placeholder: 'Write a comment…', onChange: (e: any) => setText(e.target.value) }),

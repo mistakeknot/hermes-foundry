@@ -493,4 +493,47 @@ describe('short pane: the Comment box', () => {
   it('flows with the card in a pane under 500 px high, so it cannot cover the profile and status rows', async () => {
     expect((await dockWithPaneHeight(376)).style.position).not.toBe('sticky')
   })
+
+  // jsdom has no layout, so the measurements are doubles: the pane is `h` high, the dock `dockH` high, and the Assign rows end at `endY`
+  async function dockMeasured(h: number, endY: number, dockH: number) {
+    const protos: [string, PropertyDescriptor | undefined][] = [
+      ['clientHeight', Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')],
+      ['offsetHeight', Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')],
+    ]
+    const rectDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'getBoundingClientRect')
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => h })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get(this: HTMLElement) { return this.id === 'foundry-comment-dock' ? dockH : 0 } })
+    Object.defineProperty(Element.prototype, 'getBoundingClientRect', { configurable: true, value(this: HTMLElement) {
+      const y = this.id === 'foundry-panel' ? 0 : this.style.height === '0px' ? endY : 0
+      return { top: y, bottom: y, left: 0, right: 0, width: 0, height: 0, x: 0, y }
+    } })
+    try {
+      const fx = await new MockApi(Date.now, 3_600_000).snapshot()
+      const card = fx.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
+      const scene = await mount(() => Promise.reject(new Error('no router')))
+      await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+      await dragOnto(scene, fx.workers[0].id, card.id)
+      await waitFor(() => !!document.getElementById('foundry-comment-dock'), 'the card panel')
+      await tick()
+      return document.getElementById('foundry-comment-dock') as HTMLElement
+    } finally {
+      for (const [k, d] of protos) { if (d) Object.defineProperty(HTMLElement.prototype, k, d); else delete (HTMLElement.prototype as any)[k] }
+      if (rectDesc) Object.defineProperty(Element.prototype, 'getBoundingClientRect', rectDesc)
+    }
+  }
+  it('a tall-enough pane (500 to 535 px) keeps the dock pinned when the Assign rows end above it', async () => {
+    expect((await dockMeasured(520, 300, 120)).style.position).toBe('sticky') // rows end at 300, room above the dock is 400
+  })
+  it('a pane of 500 to 535 px unpins the dock when a wrapped title pushes the Assign rows under it', async () => {
+    expect((await dockMeasured(500, 420, 120)).style.position).not.toBe('sticky') // rows end at 420 > room 380
+  })
+  it('... also at 535 px', async () => {
+    expect((await dockMeasured(535, 440, 130)).style.position).not.toBe('sticky') // 440 > 405
+  })
+  it('the dock stays pinned when the rows end exactly at the edge of the room, and unpins one pixel past it', async () => {
+    expect((await dockMeasured(520, 400, 120)).style.position).toBe('sticky')
+  })
+  it('... and one pixel past the edge of the room', async () => {
+    expect((await dockMeasured(520, 401, 120)).style.position).not.toBe('sticky')
+  })
 })
