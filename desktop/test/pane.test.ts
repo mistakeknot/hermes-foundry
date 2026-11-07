@@ -514,6 +514,9 @@ describe('sound cues in the pane', () => {
     ;(globalThis as any).localStorage = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v }, removeItem: (k: string) => { delete store[k] } }
   })
   afterEach(() => { delete (globalThis as any).AudioContext; for (const k of Object.keys(store)) delete store[k] })
+  const oscTotal = (made: any[]) => made.reduce((n, c) => n + c.oscs, 0)
+  /** the first pointer gesture in the pane (what a real click or tap is): activates a restored "on" */
+  const gesture = () => act(async () => { document.getElementById('foundry-sound')!.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
 
   it('is off by default (no AudioContext made); the toggle turns it on, and a successful assign then plays a cue', async () => {
     const made = stubAudio()
@@ -553,10 +556,84 @@ describe('sound cues in the pane', () => {
     await act(async () => { scene.cb.onPick({ kind: 'worker', id: fx.workers[0].id }) })
     const stand = () => Array.from(document.querySelectorAll('#foundry-panel button')).find((b) => b.textContent === 'Stand') as HTMLButtonElement | undefined
     await waitFor(() => !!stand(), 'the Stand button')
-    const before = made.reduce((n, c) => n + c.oscs, 0)
+    expect(made.length).toBe(0) // a restored "on" makes no context until a gesture
+    await gesture()
+    expect(made.length).toBe(1)
+    const before = oscTotal(made)
     await act(async () => { stand()!.click() })
     await tick()
-    expect(made.reduce((n, c) => n + c.oscs, 0)).toBeGreaterThan(before)
+    expect(oscTotal(made)).toBeGreaterThan(before)
+  })
+
+  it('a restored "on" is silent until the first gesture: an automatic cue before it makes no context', async () => {
+    const made = stubAudio()
+    store['foundry.sound'] = '1'
+    const fx = await new MockApi(Date.now, 3_600_000).snapshot()
+    const scene = await mount(() => Promise.reject(new Error('no router')))
+    await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+    // a keyboard-less, pointer-less run: the command path (assign) completes with no gesture in the pane
+    const card = fx.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
+    await dragOnto(scene, fx.workers[0].id, card.id) // dragOnto dispatches on the canvas, but not a pointerdown on the pane root chain we count
+    made.length = 0
+    await waitFor(() => !!document.getElementById('foundry-profile'), 'the card panel')
+    FIRST = profileButtons()[0].textContent!
+    await pressAssign('reviewer')                  // the click itself is not a pointerdown, so no activation
+    await tick()
+    expect(made.length).toBe(0)
+    expect((document.getElementById('foundry-sound') as HTMLButtonElement).textContent).toBe('sound on')
+  })
+
+  it('a command that completes after the pane unmounts never sounds or opens a context', async () => {
+    const made = stubAudio()
+    store['foundry.sound'] = '1'
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const posts: unknown[] = []
+    const rest: Rest = async (path, opts) => {
+      if (opts?.method && opts.method !== 'GET') { posts.push(opts.body); await gate; return { ok: true } }
+      if (path.startsWith('/snapshot')) return snap
+      if (path.startsWith('/events')) return { v: 1, epoch: snap.epoch, cursor: snap.cursor, events: [], resync: false }
+      return {}
+    }
+    const scene = await mount(rest)
+    await waitFor(() => !document.getElementById('foundry-simulated') && !!document.querySelector('canvas'), 'the live pane')
+    await tick(60)
+    await gesture()
+    expect(made.length).toBe(1)
+    const card = snap.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
+    await dragOnto(scene, snap.workers[0].id, card.id)
+    await waitFor(() => !!document.getElementById('foundry-profile'), 'the card panel')
+    await tick()
+    FIRST = profileButtons()[0].textContent!
+    await pressAssign('reviewer')                  // the POST is now pending
+    expect(posts).toHaveLength(1)
+    const n = oscTotal(made)
+    await act(async () => { root!.unmount() }); root = null
+    expect(made[0].closed).toBe(true)
+    await act(async () => { release(); await new Promise((r) => setTimeout(r, 30)) }) // the command completes after unmount
+    expect(made.length).toBe(1)                    // no second context
+    expect(oscTotal(made)).toBe(n)                 // and no sound
+  })
+
+  it('the slip cue fires once per slip edge, not on every frame, and never for a non-looping climber', async () => {
+    const made = stubAudio()
+    store['foundry.sound'] = '1'
+    const scene = await mount(() => Promise.reject(new Error('no router')))
+    await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
+    await tick(60)
+    for (let i = 0; i < 40; i++) scene.animateClimbers(i, 1)   // everyone arrives
+    await gesture()
+    const looping = [...scene.climbers.values()].filter((c: any) => c.worker.state === 'looping')[0] as any
+    const base = -looping.phase / (2 * Math.PI) * 4
+    const slide = base + 4 * 0.84, struggle = base + 4 * 0.3
+    scene.animateClimbers(struggle, 0)              // sitting level: silent
+    const o0 = oscTotal(made)
+    scene.animateClimbers(slide, 0)                 // the edge: one slip cue
+    const o1 = oscTotal(made)
+    expect(o1).toBeGreaterThan(o0)
+    for (let i = 0; i < 5; i++) scene.animateClimbers(slide + i * 0.01, 0) // still sliding: no retrigger
+    expect(oscTotal(made)).toBe(o1)
   })
 
   it('plays the blocked cue only when a card newly becomes blocked, never on first load', async () => {
@@ -579,11 +656,18 @@ describe('sound cues in the pane', () => {
     await mount(rest)
     await waitFor(() => !document.getElementById('foundry-simulated') && !!document.getElementById('foundry-sound'), 'the live pane')
     expect((document.getElementById('foundry-sound') as HTMLButtonElement).textContent).toBe('sound on')
-    expect(made.reduce((n, c) => n + c.oscs, 0)).toBe(0) // blocked cards already on the board make no sound at first load
+    await gesture()
+    expect(made.length).toBe(1)
+    expect(oscTotal(made)).toBe(0) // blocked cards already on the board make no sound at first load
     phase = 1
     // live polling runs every 2 s, longer than waitFor's window
-    for (let i = 0; i < 250 && made.reduce((n, c) => n + c.oscs, 0) === 0; i++) await tick()
-    expect(made.reduce((n, c) => n + c.oscs, 0)).toBeGreaterThan(0)
+    for (let i = 0; i < 250 && oscTotal(made) === 0; i++) await tick()
+    const first = oscTotal(made)
+    expect(first).toBeGreaterThan(0)
     expect(phase).toBe(2)
-  })
+    // the card stays blocked: re-renders (a pick) and later polls are silent
+    await act(async () => { document.getElementById('foundry-sound')!.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
+    await tick(2200)
+    expect(oscTotal(made)).toBe(first)
+  }, 20000)
 })

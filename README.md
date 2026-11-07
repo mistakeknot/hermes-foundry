@@ -176,14 +176,15 @@ These are observations, not guarantees. In maintainers' hand runs in November 20
 runs left no recorded measurements. One run of the rehearsal harness (`scripts/rehearsal/rehearse.py perf`, 2026-11-06,
 see `scripts/rehearsal/README.md`) measured 46 to 54 fps at 30 and 110 cards, software-rendered, with the host under load
 (load average 10 to 16 on 32 cores, above the harness's own 0.2-per-core threshold). The harness is committed but its
-results are not, and that is a single run, so this README makes no claim about a minimum or typical frame rate. Nothing has
-been measured on a real GPU.
+results are not, and that is a single run, so this README makes no claim about a minimum or typical frame rate. Those
+software-rendered runs measured no real GPU; the one real-GPU hand run is described next.
 
 One hand run on a real GPU (packaged Hermes Desktop on an Apple M5 Max, WebGL2 through ANGLE/Metal, 2026-11-06, fixture
 mode) drew the pane with 3 creatures, 40 cards and 4 climbers at a median frame time of 8.3 ms (95th percentile 9.0 ms).
-That is one machine and one run, left no receipt in this repository, and does not cover live mode. Hermes Desktop turns
-the GPU off when it is launched over SSH (an `SSH_*` variable in its environment); set `HERMES_DESKTOP_DISABLE_GPU=0` to
-override that when testing remotely.
+That is one machine and one run, left no receipt in this repository, and does not cover live mode. In that hand run, the
+packaged Hermes Desktop build tested came up with the GPU off when it was launched from an SSH session, and setting
+`HERMES_DESKTOP_DISABLE_GPU=0` in its environment turned it back on. Which `SSH_*` variable triggers this was not
+determined, and the behaviour was not checked on other Hermes versions or platforms.
 
 ## Sound
 
@@ -191,6 +192,9 @@ Sound is off by default. The `sound off` / `sound on` chip in the pane header tu
 `localStorage` under `foundry.sound`. Four short cues are synthesised live with WebAudio oscillators: assign, stand,
 the climber's slip, and a card newly becoming blocked. There are no audio files, no network requests and nothing to
 license. Cues are quiet, the same cue is not replayed within 400 ms, and no audio context exists until sound is turned on.
+A saved "on" is only a preference: the browser's autoplay rule allows audio to start from a user gesture, so the audio
+context is created only when you click the chip or make the first click or key press in the pane, and cues that arrive
+before that are dropped. The context is closed when the pane closes.
 
 ## Known limits
 

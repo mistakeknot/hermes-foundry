@@ -1,7 +1,9 @@
 // Four small cues, synthesised live with WebAudio oscillators. No sample, file, URL or network is involved, so there is
 // nothing to license: every sound here is a few sine/triangle notes shaped by a gain envelope.
-// Sound is OFF by default. The context is created only when the user turns sound on (a click, so the browser's autoplay
-// rule is met) and is closed when the pane unmounts. The choice persists in localStorage under `foundry.sound`.
+// Sound is OFF by default. The preference persists in localStorage under `foundry.sound`, but the AudioContext is made
+// and resumed only inside a user gesture (the chip click, or the first pointer/key gesture in the pane via `activate()`),
+// so the browser's autoplay rule is met; cues that arrive before that gesture are dropped. The context is closed when the
+// pane unmounts, and a disposed instance never sounds or opens a context again.
 
 export type Cue = 'assign' | 'stand' | 'slip' | 'blocked'
 
@@ -68,10 +70,16 @@ export const CUES: Record<Cue, Note[]> = {
 }
 
 export interface FoundryAudio {
+  /** The saved preference (on/off). A restored "on" sounds only after `activate()`. */
   enabled(): boolean
-  /** Turning on creates the context (call it from a click). Turning off closes it. */
+  /** True when a context exists, so cues can sound now. */
+  active(): boolean
+  /** Turning on creates the context (call it from a click). Turning off closes it. No-op once disposed. */
   setEnabled(on: boolean): void
+  /** Call from a user gesture: creates/resumes the context when the preference is on. No-op otherwise or once disposed. */
+  activate(): void
   play(cue: Cue): void
+  /** Closes the context for good: nothing sounds or opens afterwards, even if a late event calls play(). */
   dispose(): void
 }
 
@@ -84,10 +92,18 @@ export interface AudioDeps {
 function defaultContext(): AudioContextLike | null {
   const C = (globalThis as any).AudioContext ?? (globalThis as any).webkitAudioContext
   if (!C) return null
-  try { return new C() as AudioContextLike } catch { return null }
+  return new C() as AudioContextLike
 }
 function defaultStore(): StoreLike | null {
   try { return (globalThis as any).localStorage ?? null } catch { return null }
+}
+
+/** Run an audio call that may throw synchronously or return a promise that rejects; neither may escape. */
+function safely(f: () => unknown): void {
+  try {
+    const r = f() as { catch?: (g: () => void) => unknown } | undefined
+    if (r && typeof r.catch === 'function') r.catch(() => {})
+  } catch { /* a closed or broken context: the cue is simply lost */ }
 }
 
 export function createAudio(deps: AudioDeps = {}): FoundryAudio {
@@ -95,6 +111,7 @@ export function createAudio(deps: AudioDeps = {}): FoundryAudio {
   const store = deps.store === undefined ? defaultStore() : deps.store
   const now = deps.now ?? (() => Date.now())
   let on = false
+  let disposed = false
   let ctx: AudioContextLike | null = null
   let master: GainLike | null = null
   let voices = 0
@@ -104,66 +121,85 @@ export function createAudio(deps: AudioDeps = {}): FoundryAudio {
   const write = (v: boolean) => { try { store?.setItem(STORAGE_KEY, v ? '1' : '0') } catch { /* private mode: the choice just does not persist */ } }
 
   const open = () => {
-    if (ctx) return
-    ctx = makeContext()
-    if (!ctx) { on = false; return }
-    master = ctx.createGain()
-    master.gain.value = MASTER_GAIN
-    master.connect(ctx.destination)
+    if (ctx || disposed) return
+    let c: AudioContextLike | null = null
+    try { c = makeContext() } catch { c = null }
+    if (!c) { on = false; return }
+    try {
+      const m = c.createGain()
+      m.gain.value = MASTER_GAIN
+      m.connect(c.destination)
+      master = m
+    } catch {
+      safely(() => c!.close?.())
+      on = false
+      return
+    }
+    ctx = c
   }
   const close = () => {
     const c = ctx
     ctx = null; master = null; voices = 0
-    try { void c?.close?.() } catch { /* already closed */ }
+    if (c) safely(() => c.close?.())
   }
+  const wake = () => { if (ctx && ctx.state === 'suspended') safely(() => ctx!.resume?.()) }
 
-  // A stored "on" opens lazily on the first cue; the browser may keep the context suspended until a gesture.
+  // The saved preference is restored now, but no context is made until a gesture calls activate().
   on = read()
 
   function play(cue: Cue) {
-    if (!on) return
-    if (!ctx) open()
+    if (disposed || !on) return
     const c = ctx, m = master
-    if (!c || !m) return
+    if (!c || !m) return // not activated by a gesture yet: drop the cue rather than start audio unprompted
     const t = now()
     const last = lastAt.get(cue)
     if (last !== undefined && t - last < MIN_GAP_MS) return
     if (voices >= MAX_VOICES) return
     lastAt.set(cue, t)
-    if (c.state === 'suspended') void c.resume?.()?.catch?.(() => {})
     voices++
     let pending = CUES[cue].length
     const done = () => { if (--pending === 0) voices = Math.max(0, voices - 1) }
-    const t0 = c.currentTime
-    for (const n of CUES[cue]) {
-      const osc = c.createOscillator(), g = c.createGain()
-      osc.type = n.type
-      const s = t0 + n.at, e = s + n.dur
-      osc.frequency.setValueAtTime(n.f0, s)
-      if (n.f1) osc.frequency.exponentialRampToValueAtTime(n.f1, e)
-      g.gain.setValueAtTime(0.0001, s)
-      if (n.swell) {
-        g.gain.linearRampToValueAtTime(n.peak, s + n.dur * 0.45)
-        g.gain.linearRampToValueAtTime(0.0001, e)
-      } else {
-        g.gain.linearRampToValueAtTime(n.peak, s + 0.012)
-        g.gain.exponentialRampToValueAtTime(0.0001, e)
+    try {
+      const t0 = c.currentTime
+      for (const n of CUES[cue]) {
+        const osc = c.createOscillator(), g = c.createGain()
+        osc.type = n.type
+        const s = t0 + n.at, e = s + n.dur
+        osc.frequency.setValueAtTime(n.f0, s)
+        if (n.f1) osc.frequency.exponentialRampToValueAtTime(n.f1, e)
+        g.gain.setValueAtTime(0.0001, s)
+        if (n.swell) {
+          g.gain.linearRampToValueAtTime(n.peak, s + n.dur * 0.45)
+          g.gain.linearRampToValueAtTime(0.0001, e)
+        } else {
+          g.gain.linearRampToValueAtTime(n.peak, s + 0.012)
+          g.gain.exponentialRampToValueAtTime(0.0001, e)
+        }
+        osc.connect(g); g.connect(m)
+        osc.onended = () => { safely(() => { osc.disconnect?.(); g.disconnect?.() }); done() }
+        osc.start(s)
+        osc.stop(e + 0.02)
       }
-      osc.connect(g); g.connect(m)
-      osc.onended = () => { try { osc.disconnect?.(); g.disconnect?.() } catch { /* gone */ } done() }
-      osc.start(s)
-      osc.stop(e + 0.02)
+    } catch {
+      voices = Math.max(0, voices - 1) // a broken or closed context: give the voice back; the cue is lost
     }
   }
 
   return {
     enabled: () => on,
+    active: () => ctx !== null,
     setEnabled(v) {
+      if (disposed) return
       on = v
-      if (v) { open(); if (ctx?.state === 'suspended') void ctx.resume?.()?.catch?.(() => {}) } else close()
+      if (v) { open(); wake() } else close()
       write(on) // `on` is false again when the window has no audio, so an unsupported window never stores "on"
     },
+    activate() {
+      if (disposed || !on) return
+      if (!ctx) open()
+      wake()
+    },
     play,
-    dispose() { close() },
+    dispose() { disposed = true; on = false; close() },
   }
 }

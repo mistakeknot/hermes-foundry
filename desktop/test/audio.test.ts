@@ -52,20 +52,101 @@ describe('audio cues', () => {
     const started = new Set(f.oscs.map((o) => o)).size
     expect(started).toBeLessThanOrEqual(CUES.assign.length * 2 + MAX_VOICES * 2)
   })
-  it('off closes the context, stores "0", and silences; a stored "1" opens lazily on the first cue', async () => {
+  it('off closes the context, stores "0", and silences', () => {
+    const f = fakeCtx(); const store = memStore()
+    const a = createAudio({ makeContext: () => f.ctx, store })
+    a.setEnabled(true)
+    a.setEnabled(false)
+    expect(f.ctx.close).toHaveBeenCalled()
+    expect(store.m[STORAGE_KEY]).toBe('0')
+    expect(a.active()).toBe(false)
+    const n = f.oscs.length
+    a.play('slip')
+    expect(f.oscs.length).toBe(n)
+  })
+  it('a saved "on" is only a preference: no context and no sound until a gesture calls activate()', () => {
     const f = fakeCtx(); const store = memStore({ [STORAGE_KEY]: '1' })
     const make = vi.fn(() => f.ctx)
     const a = createAudio({ makeContext: make, store })
     expect(a.enabled()).toBe(true)
+    expect(a.active()).toBe(false)
+    a.play('stand'); a.play('assign')       // automatic cues before any gesture
     expect(make).not.toHaveBeenCalled()
-    a.play('stand')
+    expect(f.ctx.resume).not.toHaveBeenCalled()
+    expect(f.oscs.length).toBe(0)
+    a.activate()                              // the first pointer/key gesture
     expect(make).toHaveBeenCalledTimes(1)
-    a.setEnabled(false)
-    expect(f.ctx.close).toHaveBeenCalled()
-    expect(store.m[STORAGE_KEY]).toBe('0')
+    expect(a.active()).toBe(true)
+    a.play('stand')
+    expect(f.oscs.length).toBe(CUES.stand.length)
+  })
+  it('activate() with the preference off does nothing, and resumes a suspended context from a gesture only', () => {
+    const f = fakeCtx(); const make = vi.fn(() => f.ctx)
+    const off = createAudio({ makeContext: make, store: memStore() })
+    off.activate()
+    expect(make).not.toHaveBeenCalled()
+    const on = createAudio({ makeContext: make, store: memStore() })
+    on.setEnabled(true)
+    ;(f.ctx as any).state = 'suspended'
+    f.ctx.resume.mockClear()
+    on.play('assign')                         // an automatic cue never resumes
+    expect(f.ctx.resume).not.toHaveBeenCalled()
+    on.activate()                             // a gesture does
+    expect(f.ctx.resume).toHaveBeenCalledTimes(1)
+  })
+  it('dispose is permanent: a late play/setEnabled/activate neither sounds nor opens a context', () => {
+    const f = fakeCtx(); const make = vi.fn(() => f.ctx); const store = memStore()
+    const a = createAudio({ makeContext: make, store })
+    a.setEnabled(true); a.dispose()
+    expect(make).toHaveBeenCalledTimes(1)
+    expect(a.enabled()).toBe(false)
     const n = f.oscs.length
-    a.play('slip')
+    a.play('assign'); a.setEnabled(true); a.activate(); a.play('assign')
+    expect(make).toHaveBeenCalledTimes(1)
     expect(f.oscs.length).toBe(n)
+    expect(a.active()).toBe(false)
+    expect(store.m[STORAGE_KEY]).toBe('1')    // disposing does not erase the saved choice
+  })
+  it('a resume() that throws or rejects, and a close() that throws or rejects, never escape', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (e: unknown) => unhandled.push(e);
+    (globalThis as any).process.on('unhandledRejection', onUnhandled)
+    try {
+      for (const mode of ['throw', 'reject'] as const) {
+        const f = fakeCtx()
+        ;(f.ctx as any).state = 'suspended'
+        f.ctx.resume = (mode === 'throw' ? vi.fn(() => { throw new Error('resume') }) : vi.fn(() => Promise.reject(new Error('resume')))) as any
+        f.ctx.close = (mode === 'throw' ? vi.fn(() => { throw new Error('close') }) : vi.fn(() => Promise.reject(new Error('close')))) as any
+        const a = createAudio({ makeContext: () => f.ctx, store: memStore() })
+        expect(() => a.setEnabled(true)).not.toThrow()
+        expect(() => a.activate()).not.toThrow()
+        expect(() => a.setEnabled(false)).not.toThrow()
+        a.setEnabled(true)
+        expect(() => a.dispose()).not.toThrow()
+        expect(f.ctx.resume).toHaveBeenCalled()
+        expect(f.ctx.close).toHaveBeenCalled()
+      }
+      await new Promise((r) => setTimeout(r, 20))
+      expect(unhandled).toEqual([])
+    } finally { (globalThis as any).process.off('unhandledRejection', onUnhandled) }
+  })
+  it('a context that throws while building a cue loses the cue but not the voice slot, and later cues still work', () => {
+    const f = fakeCtx(); let t = 0
+    const a = createAudio({ makeContext: () => f.ctx, store: memStore(), now: () => (t += 10_000) })
+    a.setEnabled(true)
+    const real = f.ctx.createOscillator
+    f.ctx.createOscillator = (() => { throw new Error('closed') }) as any
+    for (let i = 0; i < MAX_VOICES + 2; i++) expect(() => a.play('assign')).not.toThrow()
+    f.ctx.createOscillator = real
+    a.play('assign')                          // the slots were given back, so this still sounds
+    expect(f.oscs.length).toBe(CUES.assign.length)
+  })
+  it('a makeContext that throws leaves sound off and unstored', () => {
+    const store = memStore()
+    const a = createAudio({ makeContext: () => { throw new Error('no audio') }, store })
+    expect(() => a.setEnabled(true)).not.toThrow()
+    expect(a.enabled()).toBe(false)
+    expect(store.m[STORAGE_KEY]).toBe('0')
   })
   it('a window with no AudioContext stays off and does not store "on"', () => {
     const store = memStore()

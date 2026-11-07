@@ -78,11 +78,16 @@ function FoundryPage({ rest }: { rest: Rest }) {
   const [tip, setTip] = useState<{ label: string; x: number; y: number } | null>(null)
   const [notice, setNotice] = useState<{ text: string; err: boolean; sim: boolean } | null>(null)
   const [webgl, setWebgl] = useState(true)
-  // optional cues: off until the user turns sound on; the context is made by that click and closed on unmount
+  // optional cues: off until the user turns sound on. A saved "on" is only a preference: the context is made by the chip click
+  // or by the first pointer/key gesture in the pane (activate), never by an automatic cue. Disposed on unmount for good.
   const audioRef = useRef<FoundryAudio | null>(null)
   if (!audioRef.current) audioRef.current = createAudio()
   const [sound, setSound] = useState(() => audioRef.current!.enabled())
-  useEffect(() => () => audioRef.current?.dispose(), [])
+  useEffect(() => {
+    if (!audioRef.current) { audioRef.current = createAudio(); setSound(audioRef.current.enabled()) } // a remount after cleanup
+    return () => { audioRef.current?.dispose(); audioRef.current = null }
+  }, [])
+  const gesture = () => audioRef.current?.activate()
   const toggleSound = () => { const a = audioRef.current!; a.setEnabled(!a.enabled()); setSound(a.enabled()) }
   // set by dropping a climber on a scale: opens that card's profile selector. Carries no profile and no command.
   const [assignReq, setAssignReq] = useState<AssignRequest | null>(null)
@@ -248,7 +253,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
   const panel = h('div', { id: 'foundry-panel', style: { width: panelWidthFor(paneW), flex: 'none', borderLeft: `1px solid ${C.border}`, background: C.card, color: C.fg, font: `13px ${sans}`, overflowY: 'auto', padding: narrow ? '10px 12px' : '12px 14px' } },
     snap ? Panel({ snap, state: state!, pick, setPick, run, busyIds, notice, simulated, api: api!, scene: sceneRef, assignReq, clearAssignReq: () => setAssignReq(null), pinComment: !shortPane }) : null)
 
-  return h('div', { ref: rootRef, style: { display: 'flex', height: '100%', width: '100%', background: C.bg } }, stage, panel)
+  return h('div', { ref: rootRef, onPointerDownCapture: gesture, onKeyDownCapture: gesture, style: { display: 'flex', height: '100%', width: '100%', background: C.bg } }, stage, panel)
 }
 
 interface PanelProps {
