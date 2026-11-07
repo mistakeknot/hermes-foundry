@@ -35,8 +35,8 @@ project's own README or repository description, and Foundry makes no claim to be
   layer.
 
 What Foundry does differently: the scene is a metaphor for the work (boards and cards), not a place for agents to sit,
-and it is operable, not only a view. In live mode it only assigns: it goes through Hermes' own `assign_task` and never
-claims or starts a card.
+and it is operable, not only a view. Live assignment uses Hermes' own `assign_task`; Foundry does not claim or start the
+card, though Hermes may start it once assigned.
 
 ## Install and run
 
