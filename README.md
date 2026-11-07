@@ -110,6 +110,12 @@ If the pane cannot reach Foundry's router it falls back to an in-pane fixture (a
 Assigning a profile only assigns. Foundry never claims or starts a card, and Hermes may start it once it is assigned
 (which can spend model tokens through the normal dispatcher). Nothing in Foundry calls a model itself.
 
+In the 2026-11-06 rehearsal on Hermes `5ec43faa`, using a scratch home and a stub model, a worker picked an assigned card
+up only through a dispatcher that was running: the dispatcher was embedded in the gateway (`hermes gateway run`), and
+`hermes webapp` had already started one. A card assigned while no gateway was running stayed in `ready`. When the gateway
+could not read the home's `config.yaml` (a duplicate key, in one run), its dispatcher claimed nothing and logged
+`skipped_nonspawnable` on the card. These are observations from that run, not guarantees of how Hermes behaves elsewhere.
+
 ## Desktop pane
 
 The `/foundry` pane lives in `desktop/`. `desktop/plugin.js` is the committed build and is
@@ -230,8 +236,11 @@ receipt in this repository).
   nothing else is claimed. Pane heights of 500 to 535 px were not measured in the real app.
 - **Live mode needs a newer Hermes.** By hand, Hermes 0.16.0 (2026.6.5) lacks the kanban modules, so live mode answers
   503 there. The live tests (skipped unless `FOUNDRY_HERMES_SRC` points at a Hermes with the kanban modules) were run
-  by hand against Hermes main at commit 90d6b98f (2026-11-05) and passed. Live mode has not been run end to end
-  through a real dispatcher with a worker picking up an assigned card.
+  by hand against Hermes main at commit 90d6b98f (2026-11-05) and passed. One end-to-end hand run (2026-11-06,
+  Hermes `5ec43faa`, a scratch `HERMES_HOME`, a local stand-in model server, no real model or credential) assigned a
+  card from the pane in headless Chromium; the dispatcher embedded in the gateway claimed it, a real worker finished
+  it, and the pane showed ready, running, then done (about 22 s after the click, in that one run). It is one run on
+  one commit with a stub model, not a measurement of how long real work takes.
 - **The pane inside a real Hermes Desktop is not exercised by the install gate.** The unit tests cover the pane in
   jsdom; separate hand runs drove it in headless Chromium, and one hand run opened it in a packaged Hermes Desktop
   (nav entry "Foundry", route `#/foundry`) with no CSP or console error from Foundry. The desktop half is opt-in and, on some builds, only
