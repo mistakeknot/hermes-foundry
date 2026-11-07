@@ -565,22 +565,27 @@ describe('sound cues in the pane', () => {
     expect(oscTotal(made)).toBeGreaterThan(before)
   })
 
-  it('a restored "on" is silent until the first gesture: an automatic cue before it makes no context', async () => {
+  it('a restored "on" is silent until the first gesture: automatic cues before it make no context and no sound', async () => {
     const made = stubAudio()
     store['foundry.sound'] = '1'
-    const fx = await new MockApi(Date.now, 3_600_000).snapshot()
     const scene = await mount(() => Promise.reject(new Error('no router')))
     await waitFor(() => !!document.getElementById('foundry-simulated'), 'the fixture snapshot')
-    // a keyboard-less, pointer-less run: the command path (assign) completes with no gesture in the pane
-    const card = fx.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
-    await dragOnto(scene, fx.workers[0].id, card.id) // dragOnto dispatches on the canvas, but not a pointerdown on the pane root chain we count
-    made.length = 0
-    await waitFor(() => !!document.getElementById('foundry-profile'), 'the card panel')
-    FIRST = profileButtons()[0].textContent!
-    await pressAssign('reviewer')                  // the click itself is not a pointerdown, so no activation
-    await tick()
-    expect(made.length).toBe(0)
-    expect((document.getElementById('foundry-sound') as HTMLButtonElement).textContent).toBe('sound on')
+    expect((document.getElementById('foundry-sound') as HTMLButtonElement).textContent).toBe('sound on') // the stored choice is honoured
+    await tick(60)
+    for (let i = 0; i < 40; i++) scene.animateClimbers(i, 1)   // everyone arrives; no pointer or key event has reached the pane
+    const looping = [...scene.climbers.values()].filter((c: any) => c.worker.state === 'looping')[0] as any
+    const base = -looping.phase / (2 * Math.PI) * 4
+    const slide = base + 4 * 0.84, struggle = base + 4 * 0.3
+    scene.animateClimbers(struggle, 0)
+    scene.animateClimbers(slide, 0)                 // an automatic slip edge before any gesture
+    expect(made.length).toBe(0)                     // no context was made
+    expect(oscTotal(made)).toBe(0)                  // and nothing sounded
+    await gesture()                                 // the first real gesture creates the context
+    expect(made.length).toBe(1)
+    expect(oscTotal(made)).toBe(0)                  // the activation itself is silent
+    scene.animateClimbers(struggle, 0)
+    scene.animateClimbers(slide, 0)                 // the next slip edge now sounds
+    expect(oscTotal(made)).toBeGreaterThan(0)
   })
 
   it('a command that completes after the pane unmounts never sounds or opens a context', async () => {
