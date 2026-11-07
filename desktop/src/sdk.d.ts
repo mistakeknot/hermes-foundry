@@ -10,6 +10,7 @@ declare module '@hermes/plugin-sdk' {
 }
 declare module 'react' {
   export function useEffect(f: () => void | (() => void), deps?: unknown[]): void
+  export function useLayoutEffect(f: () => void | (() => void), deps?: unknown[]): void
   export function useRef<T>(v: T | null): { current: T | null }
   export function useState<T>(v: T | (() => T)): [T, (v: T | ((p: T) => T)) => void]
   export function useMemo<T>(f: () => T, deps: unknown[]): T
