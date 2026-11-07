@@ -1,10 +1,10 @@
 # Plan: "Foundry" — a 3D workspace to see and run the software factory in Hermes
 
-Bead: mk-ps6ow. Card: GSVP-10 (closed). mk's answer on the card: "3D workspace to visualize and operate the software factory in hermes".
+The idea, from the project brief: a 3D workspace to visualize and operate the software factory in Hermes.
 Deadline: Nov 11, 2026, 2 PM PST. Build window: Nov 7 to Nov 10; Nov 11 morning is for the video and submission.
 Name "Foundry" is a placeholder (design choice).
 
-**Status of this document: proposed.** The only decision mk made is the idea, on card GSVP-10 ("3D workspace to visualize and operate the software factory in hermes"). Everything else here is a design choice, proposed and not decided: the scope, the day plan, the cut order and every "must", "never" and "required" below. No line in this document records an mk ruling other than the idea. If a cut would change what mk sees in the entry, it goes to mk as one question through the vizier.
+**Status of this document: proposed.** The project brief is the idea: a 3D workspace to visualize and operate the software factory in Hermes. Everything else here is a design choice, proposed and not decided: the scope, the day plan, the cut order and every "must", "never" and "required" below. No line in this document records a decision other than the idea. If a cut would change what the entry shows, it goes to the maintainer as one question.
 
 ## What "the software factory" means here (design choice)
 Judges run stock Hermes, so the factory must be Hermes's own:
@@ -13,7 +13,7 @@ Judges run stock Hermes, so the factory must be Hermes's own:
 - **Docs** are files that cards link to.
 - **Workers** are Hermes sessions and delegated subagents.
 
-A second adapter that reads beads and Citadel is the GSV bonus. Proposed: cut now (see the cut order under Risks); it comes back only if everything above the floor is done and green.
+A second adapter that reads beads and an estate tracker is a proposed bonus. Proposed, not decided: cut it first (see the cut order under Risks); it comes back only if everything above the floor is done and green. No code is written for it.
 
 ## What you see and do
 - **Valley view:** each project is a creature standing in one valley, sized by open work.
@@ -57,7 +57,7 @@ A second adapter that reads beads and Citadel is the GSV bonus. Proposed: cut no
 - **Nov 8:** valley view, statuses, climbers driven by the fixture state machine, click a scale to open card and doc, assign and status buttons working on both fixture and live Hermes.
 - **Nov 9 (feature freeze at end of day):** finish and harden the floor first. Then, only if time remains and each is proven on stock Hermes (otherwise fixture-simulated and labelled): message a climber, delegate ("+ new climber"), the drag gesture, in cut order. Clean-home install rehearsal on the fixture.
 - **Nov 10 (verify and record):** timed interaction checklist against the 2D board, art direction (original look: stone, lichen, coral), performance pass, README, catalog PR draft, record the full 90s video and one live take. Nothing new ships after Nov 9.
-- **Nov 11 AM:** only mk's submission steps (catalog PR, X post, entry form) and a re-record if the Nov 10 take failed.
+- **Nov 11 AM:** only the maintainer's submission steps (catalog PR, X post, entry form) and a re-record if the Nov 10 take failed.
 
 ## Demo storyboard (90s, proposed)
 Floor storyboard: it needs only click, comment, status and assign buttons, on fixture or live Hermes.
@@ -89,17 +89,17 @@ Optional beats, each replacing one floor beat only if it is kept (and shown as s
   - exec A's reading of the Hermes plugin SDK on Nov 6 is that `ctx.rest` cannot reach another plugin's REST namespace and `ctx.socket` does nothing on OAuth remotes. Foundry therefore assumes it must serve its own router and poll. This is a reading of source, not a runtime test;
   - whether three.js runs inside a runtime `plugin.js` bundle without CSP issues is unchecked.
   - Both are re-proved at the Nov 7 integration gate.
-- **Probe clone:** `/tmp/foundry-probe/hermes-agent`, outside scanned roots. It is disposable.
+- **Probe clone:** a disposable source checkout of Hermes, outside scanned roots.
 
 ## Risks
 - **The cross-plugin REST assumption and CSP for three.js are unproven.** Fallback: Foundry's own Python router proxies the kanban calls; the scene may be served as a local web page opened from a slash command only if it keeps the same authenticated origin as the Hermes plugin router (it must not weaken authentication; if it cannot, the fallback is not used).
 - **Legibility past about 100 cards.** Show scales only on zoom; group by epic.
-- **Scope (proposed, not decided). Proposed cut order:** the beads adapter (cut now), sound, the slip check, "stand" (unless proven Nov 7), transcripts, live message and delegation, then the drag gesture. Proposed floor, not to be cut: click-to-open, comment and status buttons, and profile assignment via a button. The floor storyboard above needs only the floor.
+- **Scope (proposed, not decided). Proposed cut order:** the beads adapter (proposed first cut; no code is written for it), sound, the slip check, "stand" (unless proven Nov 7), transcripts, live message and delegation, then the drag gesture. Proposed floor, not to be cut: click-to-open, comment and status buttons, and profile assignment via a button. The floor storyboard above needs only the floor.
 - **"Stand" must not overclaim.** It pauses at the next tool boundary and never claims to cancel a tool call already running.
 - **Acceptance:** a small timed checklist (open a card, change a status, assign a profile, each at least as fast as the 2D board) and a clean-install fixture rehearsal on Nov 9 and again on Nov 10. Live execution is optional.
 
 ## Gates (unchanged)
-- The code goes in a new private repo first. Making it public, the catalog PR, the X post and the entry form are all mk's.
+- The code started in a private repo. Making it public, the catalog PR, the X post and the entry form are all the maintainer's.
 - Cross-lab review of this plan before executors start (the reviewer independence rule).
 
 ## Revision log
