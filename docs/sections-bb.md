@@ -1,6 +1,6 @@
 # Sections: the bb backend
 
-The bb backend (`aleph/src/sections/bb-backend.ts`, bead mk-ps6ow.14.4) implements the same `SectionsBackend` interface as
+The bb backend (`aleph/src/sections/bb-backend.ts`) implements the same `SectionsBackend` interface as
 the Hermes file backend (see [`sections-file.md`](sections-file.md)) over bb's own **thread sections**, reached through the
 plugin SDK (`useSdk().threadSections` and `useSdk().threads`). The SDK object is injected: the backend takes anything shaped
 like `BbSectionsSdk`, and the real `useSdk()` client satisfies it (the panel passes it in, so a build proves that).
@@ -102,8 +102,8 @@ It logs one line per step and resolves a report `{ok, steps, restore, renameUpda
 2. `list`, then `create` a section named `runtime-check <timestamp>` (stored as `foundry/<project>/runtime-check <timestamp>`);
 3. create the same name in another case (the backend refuses) and the exact stored name through the raw SDK (expects bb's 409);
 4. `list` shows it; move the thread in and check it is listed there; `rename` the section while the thread is in it (checks the
-   thread is still listed, and that bb's `updatedThreadCount` is 1 when the SDK returns one; an SDK that returns none is
-   reported as such, not failed); move the thread out and check it is not listed;
+   thread is still listed, and that bb's `updatedThreadCount` is exactly 1; a missing, non-numeric or other value fails the
+   step, as the installed SDK schema requires the field); move the thread out and check it is not listed;
 5. **restore the thread** to the section it started in (or none): `threads.update`, then a `threads.list` read-back, up to
    `restoreAttempts` times (default 3);
 6. only then `delete` the throwaway section and check it is gone, and check the thread still exists in its original section.

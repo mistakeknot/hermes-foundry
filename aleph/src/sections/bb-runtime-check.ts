@@ -36,7 +36,7 @@ export interface BbCheckReport {
   steps: BbCheckStep[]
   /** Set once the check has moved the thread. */
   restore: BbCheckRestore | null
-  /** What `threadSections.update` reported as updatedThreadCount on the rename; null when the SDK did not return one. */
+  /** What `threadSections.update` reported as updatedThreadCount on the rename; null when the SDK returned none (which fails the rename step: the installed SDK requires the field). */
   renameUpdatedThreadCount: number | null
   /** Sections the check made and could not delete (by id and bb name). Empty when cleanup worked. */
   leftBehind: Array<{ id: string; name: string }>
@@ -148,14 +148,14 @@ export async function runBbSectionsCheck(sdk: BbSectionsSdk, opts: BbCheckOption
     await step('rename', async () => { lastRename = null; return backend.rename(creature, made.id, renamedName) },
       (s) => {
         const n = (lastRename as BbSectionMutation | null)?.updatedThreadCount
-        return `now "${s.name}"; ${typeof n === 'number' ? `bb reports updatedThreadCount ${n}` : 'bb returned no updatedThreadCount'}`
+        return `now "${s.name}"; bb reports updatedThreadCount ${String(n)}`
       },
       (s) => {
         if (s.id !== made.id || s.name !== renamedName) return `unexpected result ${JSON.stringify(s)}`
         if (!sameList(s.cardIds, [picked.id])) return 'the thread is not in the section after the rename'
         const n = (lastRename as BbSectionMutation | null)?.updatedThreadCount
         report.renameUpdatedThreadCount = typeof n === 'number' ? n : null
-        return typeof n === 'number' && n !== 1 ? `bb reports updatedThreadCount ${n}, expected 1` : null
+        return n === 1 ? null : `bb reports updatedThreadCount ${n === undefined ? 'nothing' : JSON.stringify(n)}, expected 1`
       })
 
     await step('move thread out', async () => { await backend.moveCard(creature, picked.id, null); return backend.list(creature) },

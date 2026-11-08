@@ -53,18 +53,22 @@ describe('runBbSectionsCheck', () => {
     expect(restoreAt).toBeLessThan(deleteAt)
   })
 
-  it('reports the rename updatedThreadCount, and an absent count is not a failure', async () => {
-    const bb = new FakeBb({ threads: [['t_1', 'proj1']] })
-    const ok = await runBbSectionsCheck(bb)
-    expect(ok).toMatchObject({ ok: true, renameUpdatedThreadCount: 1 })
-    expect(ok.steps.find((s) => s.step === 'rename')?.detail).toMatch(/updatedThreadCount 1/)
+  it('reports the rename updatedThreadCount', async () => {
+    const r = await runBbSectionsCheck(new FakeBb({ threads: [['t_1', 'proj1']] }))
+    expect(r).toMatchObject({ ok: true, renameUpdatedThreadCount: 1 })
+    expect(r.steps.find((s) => s.step === 'rename')?.detail).toMatch(/updatedThreadCount 1/)
+  })
 
-    const bare = new FakeBb({ threads: [['t_1', 'proj1']] })
-    const real = bare.threadSections.update
-    bare.threadSections.update = async (a) => { const { id, name } = await real(a); return { id, name } as never } // an sdk that returns no count
-    const r = await runBbSectionsCheck(bare)
-    expect(r).toMatchObject({ ok: true, renameUpdatedThreadCount: null })
-    expect(r.steps.find((s) => s.step === 'rename')?.detail).toMatch(/no updatedThreadCount/)
+  it.each([['missing', undefined], ['non-numeric', '1']])('fails the rename step when updatedThreadCount is %s, and still cleans up', async (_label, bad) => {
+    const bb = new FakeBb({ threads: [['t_1', 'proj1']] })
+    const real = bb.threadSections.update
+    bb.threadSections.update = async (a) => { const { id, name } = await real(a); return { id, name, updatedThreadCount: bad } as never }
+    const r = await runBbSectionsCheck(bb)
+    expect(r.ok).toBe(false)
+    expect(r.renameUpdatedThreadCount).toBeNull()
+    expect(r.steps.find((s) => s.step === 'rename')).toMatchObject({ ok: false, detail: expect.stringMatching(/expected 1/) })
+    expect(bb.rawSections()).toEqual([])
+    expect(r.leftBehind).toEqual([])
   })
 
   it('fails when bb reports an updatedThreadCount other than the one thread', async () => {
