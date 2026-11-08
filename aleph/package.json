@@ -20,7 +20,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build": "bb plugin build"
+    "build": "bb plugin build",
+    "dev": "node scripts/dev.mjs"
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.6.132",

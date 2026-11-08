@@ -55,8 +55,17 @@ bb plugin install /path/to/aleph
 bb plugin list            # shows the plugin id
 ```
 
-A local path source stays on disk and can be re-read with `bb plugin reload <id>` after a rebuild (or `bb plugin dev` while
-editing), so a restart should not be needed; this was read from `bb plugin --help` and has not been tried here. To turn it off,
+A local path source stays on disk and can be re-read with `bb plugin reload <id>` after a rebuild, so a restart is not needed.
+
+### Dev loop (rebuild and reload on save)
+
+```
+cd aleph && npm run dev
+```
+
+This runs `bb plugin dev` and also watches `../desktop/src`, the shared pane the panel bundles; `bb plugin dev` alone watches
+only `aleph/`, so a change to the pane would not rebuild. A save in either place rebuilds the bundle (about 0.3 s) and reloads
+the plugin in the running bb. Dev builds are unminified; run `npm run build` afterwards to restore the release bundle. To turn it off,
 use `bb plugin disable <id>`; to remove it, `bb plugin uninstall <id>` (this deletes the plugin's settings, and leaves the
 folder on disk).
 
