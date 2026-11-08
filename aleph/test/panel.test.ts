@@ -40,6 +40,17 @@ describe('FoundryPanel lifecycle', () => {
   })
   afterEach(() => { act(() => root.unmount()); vi.useRealTimers() })
 
+  it('lays the pane out below the host chrome row, in the flow, not against the window', () => {
+    state.sidebar = ready('First')
+    paint()
+    const outer = host.firstElementChild as HTMLElement
+    expect(outer.style.paddingTop).toContain('--bb-app-chrome-row-height')
+    expect(outer.style.position).not.toBe('absolute')
+    const wrapper = outer.firstElementChild as HTMLElement
+    expect(wrapper.style.position).toBe('relative')
+    expect((wrapper.firstElementChild as HTMLElement).style.position).toBe('absolute')
+  })
+
   it('does not mount the pane when the thread list fails first, and mounts it live after recovery', async () => {
     state.sidebar = { status: 'error' }
     paint()
