@@ -5,12 +5,44 @@ from pathlib import Path
 
 import pytest
 
-from foundry_core.sections import (SECTIONS_FILENAME, SectionsFileError, contract_epics, epic_ids_by_card,
-                                   parse_doc, read_sections, sections_path, unsorted_cards)
+from foundry_core.sections import (NAME_WHITESPACE, SECTIONS_FILENAME, SectionsFileError, check_card_id, contract_epics,
+                                   epic_ids_by_card, normalize_name, parse_doc, read_sections, sections_path,
+                                   trim_name, unsorted_cards)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "sections"
 VALID = sorted((FIXTURES / "valid").glob("*.json"))
 INVALID = sorted((FIXTURES / "invalid").glob("*.json"))
+
+
+NAMES = json.loads((FIXTURES / "names.json").read_text())
+
+
+@pytest.mark.parametrize("case", NAMES, ids=lambda c: json.dumps(c["input"]))
+def test_shared_name_cases_match_the_typescript_writer(case):
+    if case["ok"]:
+        assert normalize_name(case["input"]) == case["normalized"]
+    else:
+        with pytest.raises(SectionsFileError):
+            normalize_name(case["input"])
+
+
+def test_trimmed_whitespace_is_exactly_the_shared_list_over_every_bmp_code_point():
+    expected = json.loads((FIXTURES / "whitespace.json").read_text())["codePoints"]
+    trimmed = [cp for cp in range(0x10000)
+               if not 0xD800 <= cp <= 0xDFFF and trim_name(chr(cp) + "x" + chr(cp)) == "x"]
+    assert trimmed == expected
+    assert sorted(ord(c) for c in NAME_WHITESPACE) == expected
+
+
+def test_nel_is_not_trimmed_though_str_strip_would():
+    assert "\u0085Docs".strip() == "Docs"  # why Python's strip() cannot be the rule
+    assert normalize_name("\u0085Docs") == "\u0085Docs"
+
+
+def test_card_ids_reject_a_lone_surrogate_and_accept_a_pair():
+    with pytest.raises(SectionsFileError):
+        check_card_id("atlas:\ud800")
+    assert check_card_id("atlas:\U0001F600") == "atlas:\U0001F600"
 
 
 def test_there_are_fixtures_to_check():

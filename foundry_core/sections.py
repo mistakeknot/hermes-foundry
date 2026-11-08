@@ -24,14 +24,47 @@ CARD_ID_MAX = 200
 RESERVED_NAME = "unsorted"
 _SECTION_ID = re.compile(r"s_[0-9a-f]{8}")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+# The characters trimmed from both ends of a name: the ECMAScript WhiteSpace and LineTerminator sets, spelled out so this
+# is the same set as NAME_WHITESPACE in aleph/src/sections/model.ts. Python's str.strip() is not that set (it also trims
+# U+0085 and U+001C-U+001F), so it is never used on a name. Part of the file format (docs/sections-file.md).
+NAME_WHITESPACE = (
+    "\t\n\u000b\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+# A UTF-16 surrogate code point on its own. json.loads keeps a lone "\ud800" escape as one; a valid pair becomes one astral character.
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 class SectionsFileError(ValueError):
     """The sections file exists but is not a valid v1 document."""
 
 
+def trim_name(text: str) -> str:
+    """``text`` without NAME_WHITESPACE at either end."""
+    return text.strip(NAME_WHITESPACE)
+
+
+def normalize_name(raw: Any) -> str:
+    """A section name as the writer stores it: trimmed, 1..80 UTF-16 units, no control characters or lone surrogates, not
+    "Unsorted" (compared by lowercase only). Raises ``SectionsFileError``. Mirrors ``normalizeName`` in the TypeScript writer."""
+    if not isinstance(raw, str) or _LONE_SURROGATE.search(raw):
+        raise _bad("bad section name")
+    name = trim_name(raw)
+    if not name or _utf16_len(name) > NAME_MAX or _CONTROL.search(name) or name.lower() == RESERVED_NAME:
+        raise _bad("bad section name")
+    return name
+
+
+def check_card_id(raw: Any) -> str:
+    """A card id as the writer accepts it: 1..200 UTF-16 units, no control characters or lone surrogates."""
+    if (not isinstance(raw, str) or not raw or _LONE_SURROGATE.search(raw) or _utf16_len(raw) > CARD_ID_MAX
+            or _CONTROL.search(raw)):
+        raise _bad("bad card id")
+    return raw
+
+
 def _utf16_len(text: str) -> int:
-    return len(text.encode("utf-16-le")) // 2  # the TypeScript writer counts UTF-16 units; match it
+    return len(text.encode("utf-16-le")) // 2  # the TypeScript writer counts UTF-16 units; match it. Callers reject lone surrogates first.
 
 
 def _bad(why: str) -> SectionsFileError:
@@ -64,8 +97,7 @@ def parse_doc(raw: Any) -> list[dict[str, Any]]:
         if sid in ids:
             raise _bad("duplicate section id")
         ids.add(sid)
-        if (not isinstance(name, str) or name != name.strip() or not name or _utf16_len(name) > NAME_MAX
-                or _CONTROL.search(name) or name.lower() == RESERVED_NAME):
+        if normalize_name(name) != name:  # stored names are already trimmed
             raise _bad("bad section name")
         if name.lower() in names:
             raise _bad("duplicate section name")
@@ -73,8 +105,7 @@ def parse_doc(raw: Any) -> list[dict[str, Any]]:
         if not isinstance(card_ids, list):
             raise _bad("cardIds is not a list")
         for cid in card_ids:
-            if not isinstance(cid, str) or not cid or _utf16_len(cid) > CARD_ID_MAX or _CONTROL.search(cid):
-                raise _bad("bad card id")
+            check_card_id(cid)
             if cid in cards:
                 raise _bad("a card is in two sections")
             cards.add(cid)

@@ -1,0 +1,21 @@
+[
+  {"input": "Docs", "ok": true, "normalized": "Docs"},
+  {"input": "  Docs  ", "ok": true, "normalized": "Docs"},
+  {"input": "Release  prep", "ok": true, "normalized": "Release  prep"},
+  {"input": " Docs　", "ok": true, "normalized": "Docs"},
+  {"input": "﻿Docs﻿", "ok": true, "normalized": "Docs"},
+  {"input": " Docs ", "ok": true, "normalized": "Docs"},
+  {"input": " Docs ", "ok": true, "normalized": "Docs"},
+  {"input": "\u0085Docs", "ok": true, "normalized": "\u0085Docs"},
+  {"input": "Docs\u0085", "ok": true, "normalized": "Docs\u0085"},
+  {"input": "Docs 😀", "ok": true, "normalized": "Docs 😀"},
+  {"input": "", "ok": false},
+  {"input": "   ", "ok": false},
+  {"input": "﻿", "ok": false},
+  {"input": "\u001cDocs", "ok": false},
+  {"input": "Do\tcs", "ok": false},
+  {"input": "Unsorted", "ok": false},
+  {"input": "﻿ UNSORTED ", "ok": false},
+  {"input": "Do\ud800cs", "ok": false},
+  {"input": "\udc00", "ok": false}
+]

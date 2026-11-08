@@ -143,4 +143,163 @@ describe('file backend', () => {
     await expect(b.create('atlas', 'Unsorted')).rejects.toBeInstanceOf(SectionsError)
     await expect(fs.stat(path.join(boardDir(root, 'atlas'), SECTIONS_FILENAME))).rejects.toThrow()
   })
+
+  it('serialises writers across backend instances on one board (no lost updates)', async () => {
+    for (let round = 0; round < 5; round++) {
+      const root = await home()
+      const one = backendFor(root), two = backendFor(root)
+      const names = ['A', 'B', 'C', 'D', 'E', 'F']
+      await Promise.all(names.map((n, i) => (i % 2 ? two : one).create('atlas', n)))
+      expect((await backendFor(root).list('atlas')).map((s) => s.name).sort()).toEqual(names)
+    }
+  })
+
+  it('serialises writers that reach one board through different paths (an aliasing ancestor)', async () => {
+    const root = await home()
+    const alias = root + '-alias'
+    await fs.symlink(root, alias)
+    homes.push(alias)
+    const one = backendFor(root), two = backendFor(alias)
+    const names = ['A', 'B', 'C', 'D']
+    await Promise.all(names.map((n, i) => (i % 2 ? two : one).create('atlas', n)))
+    expect((await one.list('atlas')).map((s) => s.name).sort()).toEqual(names)
+  })
+
+  describe('symlinks', () => {
+    async function outsideBoard(): Promise<{ root: string; outside: string }> {
+      const root = await home([])
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'foundry-outside-'))
+      homes.push(outside)
+      await fs.mkdir(path.join(root, 'kanban', 'boards'), { recursive: true })
+      await fs.symlink(outside, boardDir(root, 'atlas'))
+      return { root, outside }
+    }
+
+    it('refuses a board directory that is a symlink, for reads and writes, and writes nothing through it', async () => {
+      const { root, outside } = await outsideBoard()
+      const b = backendFor(root)
+      await expect(b.list('atlas')).rejects.toMatchObject({ code: 'unsafe_path' })
+      await expect(b.create('atlas', 'Docs')).rejects.toMatchObject({ code: 'unsafe_path' })
+      await expect(b.moveCard('atlas', 'atlas:t_1', null)).rejects.toMatchObject({ code: 'unsafe_path' })
+      expect(await fs.readdir(outside)).toEqual([])
+    })
+
+    it('refuses a sections file that is a symlink and leaves its target alone', async () => {
+      const root = await home()
+      const target = path.join(root, 'elsewhere.json')
+      await fs.writeFile(target, '{"v":1,"sections":[]}')
+      await fs.symlink(target, path.join(boardDir(root, 'atlas'), SECTIONS_FILENAME))
+      const b = backendFor(root)
+      await expect(b.list('atlas')).rejects.toMatchObject({ code: 'unsafe_path' })
+      await expect(b.create('atlas', 'Docs')).rejects.toMatchObject({ code: 'unsafe_path' })
+      expect(await fs.readFile(target, 'utf8')).toBe('{"v":1,"sections":[]}')
+      expect((await fs.lstat(path.join(boardDir(root, 'atlas'), SECTIONS_FILENAME))).isSymbolicLink()).toBe(true)
+    })
+
+    it('refuses a sections file that is not a regular file', async () => {
+      const root = await home()
+      await fs.mkdir(path.join(boardDir(root, 'atlas'), SECTIONS_FILENAME))
+      await expect(backendFor(root).create('atlas', 'Docs')).rejects.toMatchObject({ code: 'unsafe_path' })
+    })
+
+    it('with a trusted root, refuses a symlinked directory anywhere between the root and the board', async () => {
+      const root = await home([])
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'foundry-outside-'))
+      homes.push(outside)
+      await fs.mkdir(path.join(outside, 'atlas'))
+      await fs.mkdir(path.join(root, 'kanban'), { recursive: true })
+      await fs.symlink(outside, path.join(root, 'kanban', 'boards')) // an ancestor of the board directory
+      const trusted = new FileSectionsBackend({ boardDir: (s) => boardDir(root, s), trustedRoot: path.join(root, 'kanban') })
+      await expect(trusted.create('atlas', 'Docs')).rejects.toMatchObject({ code: 'unsafe_path' })
+      await expect(trusted.list('atlas')).rejects.toMatchObject({ code: 'unsafe_path' })
+      expect(await fs.readdir(path.join(outside, 'atlas'))).toEqual([])
+    })
+
+    it('with a trusted root, refuses a board directory outside it', async () => {
+      const root = await home()
+      const b = new FileSectionsBackend({ boardDir: (s) => boardDir(root, s), trustedRoot: path.join(root, 'other') })
+      await expect(b.create('atlas', 'Docs')).rejects.toMatchObject({ code: 'unsafe_path' })
+    })
+
+    it('with a trusted root, still works for ordinary boards', async () => {
+      const root = await home()
+      const b = new FileSectionsBackend({ boardDir: (s) => boardDir(root, s), trustedRoot: path.join(root, 'kanban') })
+      expect((await b.create('atlas', 'Docs')).name).toBe('Docs')
+    })
+  })
+
+  describe('durability and cleanup', () => {
+    const errno = (code: string): Error => Object.assign(new Error(code), { code })
+
+    it('flushes the board directory after the rename', async () => {
+      const root = await home()
+      const dir = boardDir(root, 'atlas')
+      const events: string[] = []
+      const realOpen = fs.open.bind(fs), realRename = fs.rename.bind(fs)
+      vi.spyOn(fs, 'rename').mockImplementation(async (...a) => { events.push('rename'); return realRename(...a) })
+      vi.spyOn(fs, 'open').mockImplementation(async (...a: Parameters<typeof fs.open>) => {
+        const h = await realOpen(...a)
+        if (a[0] === dir) {
+          const sync = h.sync.bind(h)
+          h.sync = async () => { events.push('sync dir'); return sync() }
+        }
+        return h
+      })
+      await backendFor(root).create('atlas', 'Docs')
+      expect(events).toEqual(['rename', 'sync dir'])
+    })
+
+    function failDirSync(dir: string, code: string): void {
+      const realOpen = fs.open.bind(fs)
+      vi.spyOn(fs, 'open').mockImplementation(async (...a: Parameters<typeof fs.open>) => {
+        const h = await realOpen(...a)
+        if (a[0] === dir) h.sync = async () => { throw errno(code) }
+        return h
+      })
+    }
+
+    it('surfaces a real error from flushing the directory', async () => {
+      const root = await home()
+      failDirSync(boardDir(root, 'atlas'), 'EIO')
+      await expect(backendFor(root).create('atlas', 'Docs')).rejects.toMatchObject({ code: 'EIO' })
+    })
+
+    it('treats a platform that cannot flush a directory as best effort', async () => {
+      const root = await home()
+      failDirSync(boardDir(root, 'atlas'), 'ENOTSUP')
+      expect((await backendFor(root).create('atlas', 'Docs')).name).toBe('Docs')
+    })
+
+    it('removes the temp file and keeps the old file when closing the temp file fails', async () => {
+      const root = await home()
+      const b = backendFor(root)
+      await b.create('atlas', 'Docs')
+      const dir = boardDir(root, 'atlas')
+      const before = await fs.readFile(path.join(dir, SECTIONS_FILENAME), 'utf8')
+      const realOpen = fs.open.bind(fs)
+      vi.spyOn(fs, 'open').mockImplementation(async (...a: Parameters<typeof fs.open>) => {
+        const h = await realOpen(...a)
+        if (String(a[0]).endsWith('.tmp')) {
+          const close = h.close.bind(h)
+          h.close = async () => { await close(); throw errno('EIO') }
+        }
+        return h
+      })
+      await expect(b.create('atlas', 'Ship')).rejects.toMatchObject({ code: 'EIO' })
+      expect((await fs.readdir(dir)).sort()).toEqual([SECTIONS_FILENAME, 'kanban.db'])
+      expect(await fs.readFile(path.join(dir, SECTIONS_FILENAME), 'utf8')).toBe(before)
+    })
+
+    it('ignores a stale temp file left by a crash, and leaves it where it is', async () => {
+      const root = await home()
+      const dir = boardDir(root, 'atlas')
+      const stale = path.join(dir, `.${SECTIONS_FILENAME}.4242.deadbeef.tmp`)
+      await fs.writeFile(stale, '{"v":1,"sections":[{"id":"s_ffffffff","name":"Ghost","cardIds":[]}]}')
+      const b = backendFor(root)
+      expect(await b.list('atlas')).toEqual([])
+      expect((await b.create('atlas', 'Docs')).name).toBe('Docs')
+      expect((await b.list('atlas')).map((s) => s.name)).toEqual(['Docs'])
+      expect(await fs.readdir(dir)).toContain(path.basename(stale))
+    })
+  })
 })

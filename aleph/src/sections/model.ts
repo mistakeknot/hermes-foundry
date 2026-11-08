@@ -16,12 +16,29 @@ export interface SectionsDoc {
 export const emptyDoc = (): SectionsDoc => ({ v: 1, sections: [] })
 
 const CONTROL = /[\u0000-\u001f\u007f]/
+
+/**
+ * The characters trimmed from both ends of a name: the ECMAScript WhiteSpace and LineTerminator sets, spelled out so the
+ * Python reader (foundry_core/sections.py, NAME_WHITESPACE) can hold the identical set. U+0085 is not in it (JavaScript does not
+ * trim it, Python's str.strip() does); the set is part of the file format (docs/sections-file.md).
+ */
+export const NAME_WHITESPACE =
+  '\t\n\u000b\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' +
+  '\u2028\u2029\u202f\u205f\u3000\ufeff'
+const TRIM_ENDS = new RegExp(`^[${NAME_WHITESPACE}]+|[${NAME_WHITESPACE}]+$`, 'g')
+export const trimName = (raw: string): string => raw.replace(TRIM_ENDS, '')
+
+/** A UTF-16 surrogate with no partner: not text, and not representable in UTF-8. Names and card ids may not contain one. */
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/
+export const hasLoneSurrogate = (text: string): boolean => LONE_SURROGATE.test(text)
+
 const nameKey = (name: string): string => name.toLowerCase()
 
 /** A section name as stored: trimmed, 1..80 chars, no control characters, not "Unsorted". Throws invalid_name. */
 export function normalizeName(raw: unknown): string {
   if (typeof raw !== 'string') throw new SectionsError('invalid_name', 'section name must be a string')
-  const name = raw.trim()
+  if (hasLoneSurrogate(raw)) throw new SectionsError('invalid_name', 'section name has a lone surrogate')
+  const name = trimName(raw)
   if (!name) throw new SectionsError('invalid_name', 'section name is empty')
   if (name.length > NAME_MAX) throw new SectionsError('invalid_name', `section name is longer than ${NAME_MAX} characters`)
   if (CONTROL.test(name)) throw new SectionsError('invalid_name', 'section name has control characters')
@@ -30,8 +47,8 @@ export function normalizeName(raw: unknown): string {
 }
 
 export function checkCardId(raw: unknown): string {
-  if (typeof raw !== 'string' || !raw || raw.length > CARD_ID_MAX || CONTROL.test(raw)) {
-    throw new SectionsError('invalid_id', 'card id must be a non-empty string of at most 200 characters, without control characters')
+  if (typeof raw !== 'string' || !raw || raw.length > CARD_ID_MAX || CONTROL.test(raw) || hasLoneSurrogate(raw)) {
+    throw new SectionsError('invalid_id', 'card id must be a non-empty string of at most 200 characters, without control characters or lone surrogates')
   }
   return raw
 }
