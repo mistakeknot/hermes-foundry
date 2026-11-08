@@ -57,9 +57,11 @@ Layout: `src/layout.ts`. Selection and the outline: `src/selection.ts`. Pane sta
 ## Sections
 
 `src/sections/` holds the host-agnostic sections interface (list, create, rename, remove sections; move a card between
-them; per project), an in-memory backend, and the Hermes backend (a Foundry file per board beside the kanban). The bb
-backend comes later. Any backend must pass the contract suite in `test/sections/contract.ts`. See
-[`docs/sections-file.md`](../docs/sections-file.md). Nothing in the panel uses it yet.
+them; per project), an in-memory backend, the Hermes backend (a Foundry file per board beside the kanban) and the bb
+backend (bb's own thread sections, scoped to a project by a name prefix). Any backend must pass the contract suite in
+`test/sections/contract.ts`. See [`docs/sections-file.md`](../docs/sections-file.md) and
+[`docs/sections-bb.md`](../docs/sections-bb.md). Nothing in the panel's UI uses them yet; the panel only installs a console
+check, `__foundryBbSectionsCheck()`, that exercises the bb backend against the real SDK.
 
 ## Build and test
 

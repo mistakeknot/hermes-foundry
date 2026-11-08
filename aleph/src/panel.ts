@@ -1,10 +1,11 @@
 import { createElement, useEffect, useMemo, useReducer, useRef } from "react";
-import { experimental_useSidebarThreads } from "@get-bb/plugin-sdk/app";
+import { experimental_useSidebarThreads, useSdk } from "@get-bb/plugin-sdk/app";
 import foundry from "../../desktop/src/plugin";
 import { LiveApi, restFromApi } from "../../desktop/src/live";
 import { fromSidebar } from "./from-sidebar";
 import { FoundryPane } from "./pane";
 import { initialPaneState, paneReducer } from "./pane-state";
+import { installBbSectionsCheck } from "./sections/bb-check-global";
 import { buildOutline } from "./selection";
 
 // The pane is the unchanged Hermes one. It is mounted by running the Hermes plugin's own `register` against a small
@@ -41,6 +42,9 @@ const ROW: Record<string, string | number> = { ...THEMED, flexDirection: "row" }
 
 export function FoundryPanel() {
   const sidebar = experimental_useSidebarThreads();
+  const sdk = useSdk();
+  // A dev entry point, not UI: lets the bb sections backend be exercised against the real SDK from the loaded plugin's console.
+  useEffect(() => installBbSectionsCheck(sdk), [sdk]);
   const api = useRef<LiveApi | null>(null);
   const ready = sidebar.status === "ready";
   const failed = sidebar.status === "error";
