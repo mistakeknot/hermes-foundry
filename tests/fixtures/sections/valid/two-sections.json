@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "sections": [
+    {"id": "s_0a1b2c3d", "name": "Docs", "cardIds": ["atlas:t_1", "atlas:t_2"]},
+    {"id": "s_4e5f6a7b", "name": "Release prep", "cardIds": []}
+  ]
+}

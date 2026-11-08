@@ -54,6 +54,13 @@ inside the shared Hermes pane and is not exported, and exporting it needs a chan
 
 Layout: `src/layout.ts`. Selection and the outline: `src/selection.ts`. Pane state: `src/pane-state.ts`. The pane: `src/pane.ts`.
 
+## Sections
+
+`src/sections/` holds the host-agnostic sections interface (list, create, rename, remove sections; move a card between
+them; per project), an in-memory backend, and the Hermes backend (a Foundry file per board beside the kanban). The bb
+backend comes later. Any backend must pass the contract suite in `test/sections/contract.ts`. See
+[`docs/sections-file.md`](../docs/sections-file.md). Nothing in the panel uses it yet.
+
 ## Build and test
 
 ```
