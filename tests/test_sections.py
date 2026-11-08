@@ -126,3 +126,19 @@ def test_a_board_name_that_is_not_a_slug_is_refused(board):
         contract_epics(board, SECTIONS)
     with pytest.raises(ValueError):
         epic_ids_by_card(board, SECTIONS)
+
+
+INVALID_BYTES = sorted((FIXTURES / "invalid-bytes").glob("*.bin"))
+
+
+def test_there_are_invalid_byte_fixtures():
+    assert len(INVALID_BYTES) >= 4
+
+
+@pytest.mark.parametrize("path", INVALID_BYTES, ids=lambda p: p.name)
+def test_a_file_that_is_not_valid_utf8_is_corrupt_and_left_alone(tmp_path, path):
+    target = tmp_path / SECTIONS_FILENAME
+    target.write_bytes(path.read_bytes())
+    with pytest.raises(SectionsFileError):
+        read_sections(tmp_path)
+    assert target.read_bytes() == path.read_bytes()

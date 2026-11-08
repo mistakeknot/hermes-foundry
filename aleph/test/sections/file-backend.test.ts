@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs'
+import { promises as fs, readdirSync, readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -302,4 +302,24 @@ describe('file backend', () => {
       expect(await fs.readdir(dir)).toContain(path.basename(stale))
     })
   })
+
+  describe('bytes that are not valid UTF-8 (tests/fixtures/sections/invalid-bytes, also read by the Python tests)', () => {
+    const dir = path.join(__dirname, '..', '..', '..', 'tests', 'fixtures', 'sections', 'invalid-bytes')
+    const files = readdirSync(dir).filter((f) => f.endsWith('.bin')).sort()
+    it('has fixtures', () => expect(files.length).toBeGreaterThanOrEqual(4))
+    it.each(files)('%s: list and create fail as corrupt and the bytes are left unchanged', async (name) => {
+      const root = await home()
+      const target = path.join(boardDir(root, 'atlas'), SECTIONS_FILENAME)
+      const bytes = readFileSync(path.join(dir, name))
+      await fs.writeFile(target, bytes)
+      const b = backendFor(root)
+      await expect(b.list('atlas')).rejects.toMatchObject({ code: 'corrupt' })
+      await expect(b.create('atlas', 'Docs')).rejects.toMatchObject({ code: 'corrupt' })
+      expect(Buffer.compare(await fs.readFile(target), bytes)).toBe(0)
+    })
+  })
+
+  // Known limit, not tested for because no pathname check can close it: the symlink and trustedRoot checks above run before the
+  // file is opened, so a process that can swap a directory component in between can still redirect a write (Node has no openat).
+  // They stop static misconfiguration and accidental redirects only; docs/sections-file.md has the threat model.
 })

@@ -95,17 +95,27 @@ by the host (`boardDir(slug)`); it forms no path from a creature id that is not 
   (`EINVAL`, `ENOTSUP`); any other error from it is raised, and means the new file is in place but not confirmed durable.
 - **Stale temp files.** A crash before the rename, or a failed cleanup, can leave a `.foundry-sections.json.*.tmp` file. Nothing
   reads one: only `foundry-sections.json` is ever opened, so list, create and every other call ignore them. They are safe to delete.
-- **Symlinks are refused.** If the board directory is a symlink, or the sections file is a symlink or not a regular file, the call
-  fails with `unsafe_path` and nothing is read or written through it. With the optional `trustedRoot` (the boards root), a
-  board directory outside the root, or below a symlinked directory under it, is refused too. This is a check, not a lock: a
-  concurrent swap of a path component can still race it, and without `trustedRoot` the path above the board directory is trusted.
-- **A corrupt file is never overwritten.** If the file is not valid JSON or breaks the rules above, reads and writes fail with
+- **Symlinks are refused (a misconfiguration check).** If the board directory is a symlink, or the sections file is a symlink or
+  not a regular file, the call fails with `unsafe_path` and nothing is read or written through it. With the optional `trustedRoot`
+  (the boards root), a board directory outside the root, or below a symlinked directory under it, is refused too. See the threat
+  model below for what this does and does not protect against.
+- **A corrupt file is never overwritten.** If the file is not valid UTF-8 (it is decoded strictly, so invalid bytes are never
+  repaired into U+FFFD), not valid JSON, starts with a byte-order mark, or breaks the rules above, reads and writes fail with
   `corrupt` and the file is left as it is, for a person to look at.
 - **Writers in one process are serialised.** The queue is shared by every backend instance in the process and keyed by the
   file's canonical (real) path, so two instances on one board, even reached through different paths, do not lose updates.
   Writers in different processes are **not** coordinated: each reads, changes and renames, so the later rename wins and may
   drop the other's change. Only the Aleph-side backend writes.
 - **The kanban database is never opened or written by the sections code.**
+
+### Threat model
+
+The symlink and `trustedRoot` checks stop **static misconfiguration and accidental redirects**: a board directory that is a
+symlink, or a boards root that points somewhere else. They are made with pathnames before the file is opened, and Node has no
+`openat`, so they are **not** a defence against another process that can write to the Hermes home or the boards root. Such a
+process can swap a directory component between the check and the use, and could already replace `kanban.db` itself. Point the
+backend only at a directory that no untrusted user can write to. Writers in other processes are likewise not coordinated
+(see above). The swap race is a known limit, and no further pathname checks are added for it.
 
 ### Python read side (`foundry_core/sections.py`)
 

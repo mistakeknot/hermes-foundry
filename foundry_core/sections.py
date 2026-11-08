@@ -122,9 +122,13 @@ def read_sections(board_dir: str | Path) -> list[dict[str, Any]]:
     """The board's sections in creation order. No file means no sections. A file that is not valid raises ``SectionsFileError``
     (it is never repaired or replaced); an unreadable one raises ``OSError``."""
     try:
-        text = sections_path(board_dir).read_text(encoding="utf-8")
+        data = sections_path(board_dir).read_bytes()
     except (FileNotFoundError, NotADirectoryError):
         return []
+    try:
+        text = data.decode("utf-8")  # strict: invalid bytes are corrupt, never repaired
+    except UnicodeDecodeError as exc:
+        raise _bad("not valid UTF-8") from exc
     try:
         raw = json.loads(text)
     except ValueError as exc:

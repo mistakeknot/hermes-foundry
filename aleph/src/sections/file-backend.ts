@@ -6,6 +6,12 @@ import { DocSectionsBackend, randomSectionId, type DocStore } from './doc-backen
 import { emptyDoc, parseDoc, type Op, type SectionsDoc } from './model'
 import { SectionsError } from './types'
 
+// Threat model. The symlink and trustedRoot checks below stop static misconfiguration and accidental redirects (a board directory
+// that is a symlink, a boards root that points elsewhere). They run before the file is opened, so they are NOT a defence against
+// another process that can write to the Hermes home or the boards root: such a process can swap a directory component between the
+// check and the use (Node has no openat), and could already replace kanban.db itself. Do not point this backend at a directory an
+// untrusted user can write to. See "Threat model" in docs/sections-file.md.
+
 /** One file per board, beside the kanban database. Format: docs/sections-file.md. */
 export const SECTIONS_FILENAME = 'foundry-sections.json'
 /** Hermes's canonical board slug; checked before any path is formed. */
@@ -16,7 +22,8 @@ export interface FileStoreOptions {
   boardDir: (creatureId: string) => string
   /**
    * The boards root (for Hermes, the kanban directory that holds `boards/`). When given, a board directory outside it, or reached
-   * through a symlinked directory below it, is refused with `unsafe_path`. The root itself may be reached through a symlink.
+   * through a symlinked directory below it, is refused with `unsafe_path` (a misconfiguration check, not protection against a hostile
+   * process: see the threat model above). The root itself may be reached through a symlink.
    * Without it only the board directory itself is checked, so the caller's `boardDir` is trusted for the path above it.
    */
   trustedRoot?: string
@@ -35,11 +42,14 @@ const errCode = (e: unknown): string | undefined => (e as NodeJS.ErrnoException 
  *  shares one queue per board file. Two processes writing the same file are not coordinated: the later rename wins. */
 const queues = new Map<string, Promise<unknown>>()
 
+// Node's 'utf8' decoding silently turns invalid bytes into U+FFFD, which a later write would make permanent. A BOM is kept (not stripped), so JSON.parse rejects it.
+const UTF8_STRICT = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+
 class FileStore implements DocStore {
   constructor(private readonly opts: FileStoreOptions) {}
 
   /** The board's directory and sections file, or null if the board has no directory. Throws unsafe_path for a symlinked directory
-   *  (the board's own, or, with a trusted root, any below the root). A check, not a lock: a concurrent swap can still race it. */
+   *  (the board's own, or, with a trusted root, any below the root). A check made before use, so a concurrent swap by another process can race it (a known limit). */
   private async locate(creatureId: string): Promise<{ dir: string; file: string; key: string } | null> {
     checkSlug(creatureId) // before any path is formed
     const dir = this.opts.boardDir(creatureId)
@@ -75,12 +85,12 @@ class FileStore implements DocStore {
     })
     if (!st) return emptyDoc()
     if (!st.isFile()) throw unsafe('sections file is a symlink or not a regular file')
-    let text: string
+    let bytes: Buffer
     try {
       const handle = await fs.open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
       try {
         if (!(await handle.stat()).isFile()) throw unsafe('sections file is not a regular file')
-        text = await handle.readFile('utf8')
+        bytes = await handle.readFile()
       } finally {
         await handle.close()
       }
@@ -89,6 +99,8 @@ class FileStore implements DocStore {
       if (errCode(e) === 'ENOENT') return emptyDoc()
       throw e
     }
+    let text: string
+    try { text = UTF8_STRICT.decode(bytes) } catch { throw new SectionsError('corrupt', 'sections file is not valid UTF-8') } // never repaired to U+FFFD
     let raw: unknown
     try { raw = JSON.parse(text) } catch { throw new SectionsError('corrupt', 'sections file is not valid JSON') }
     return parseDoc(raw)
