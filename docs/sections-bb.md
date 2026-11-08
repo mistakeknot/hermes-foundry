@@ -96,16 +96,31 @@ await __foundryBbSectionsCheck()                      // uses the most recently 
 await __foundryBbSectionsCheck({ threadId: 'thr_x' })  // or a thread you choose; its project is the creature
 ```
 
-It logs one line per step and resolves `{ok, steps, ...}`. The steps:
+It logs one line per step and resolves a report `{ok, steps, restore, renameUpdatedThreadCount, leftBehind, ...}`. The steps:
 
 1. pick the thread to move (its project is the creature);
 2. `list`, then `create` a section named `runtime-check <timestamp>` (stored as `foundry/<project>/runtime-check <timestamp>`);
 3. create the same name in another case (the backend refuses) and the exact stored name through the raw SDK (expects bb's 409);
-4. `list` shows it; `rename` it; move the thread in and check it is listed there; move it out and check it is not;
-5. move it in again, `delete` the section, and check the section is gone and the thread still exists with no section;
-6. put the thread back in the section it started in (or none) and check it.
+4. `list` shows it; move the thread in and check it is listed there; `rename` the section while the thread is in it (checks the
+   thread is still listed, and that bb's `updatedThreadCount` is 1 when the SDK returns one; an SDK that returns none is
+   reported as such, not failed); move the thread out and check it is not listed;
+5. **restore the thread** to the section it started in (or none): `threads.update`, then a `threads.list` read-back, up to
+   `restoreAttempts` times (default 3);
+6. only then `delete` the throwaway section and check it is gone, and check the thread still exists in its original section.
 
-Cleanup (delete, restore) runs even if a step fails; the report's `sectionName` names the throwaway section for finding it by
-hand if cleanup itself failed. The check moves one real thread and restores it, so run it on a thread you do not mind
-briefly seeing in another section; the only lasting effect is that the thread's last-touched time changes. It makes no UI
-change, and the installer does nothing on a host whose SDK has no sections API.
+Cleanup runs even if a step fails, and the order matters: the thread is put back **before** anything is deleted. If the restore
+cannot be confirmed (every attempt failed, or the read-back never matched), the throwaway section is **left in place**, because
+deleting it would clear the thread's assignment for good, and the report says so: `restore` holds `{originalSectionId, attempts,
+restored, error}` (the original section id, `null` meaning none, is also in the `restore thread` step's detail), and `leftBehind`
+lists the section by id and bb name. Put the thread back by hand with that id, then delete the section.
+
+Every section the check creates is tracked, including one a probe was not meant to make: if bb accepts the raw duplicate, the
+extra section's id is kept and it is deleted in cleanup (the probe step fails). A section that cannot be deleted is listed in
+`leftBehind`; `sectionName` names the main throwaway section.
+
+Not covered by the real-bb run: that deleting a section clears the assignments of its threads. Exercising that would need the
+real thread inside the section at delete time, which is the state the check avoids; the fake in the tests covers it.
+
+The check moves one real thread and restores it, so run it on a thread you do not mind briefly seeing in another section; the
+only lasting effect is that the thread's last-touched time changes. It makes no UI change, and the installer does nothing on a
+host whose SDK has no sections API.
