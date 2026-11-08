@@ -17,6 +17,23 @@ const CLOCK_TICK_MS = 60_000;
 const CHROME_TOP = "var(--bb-app-chrome-row-height, 3rem)";
 const FILL: Record<string, string | number> = { display: "flex", flexDirection: "column", flex: "1 1 0%", minHeight: 0, minWidth: 0, width: "100%", height: "100%", boxSizing: "border-box", paddingTop: CHROME_TOP };
 
+// The unchanged Hermes pane reads Hermes' `--dt-*` theme variables; bb names the same roles without the prefix. Aliasing them
+// on the panel's own wrapper makes the pane (and the 3D stage, which reads `--dt-background`) follow bb's light or dark
+// theme live, with no change to the pane itself. A variable bb lacks falls back to the pane's own default.
+export const THEME_ALIASES: Record<string, string> = {
+  "--dt-background": "var(--background)",
+  "--dt-foreground": "var(--foreground)",
+  "--dt-card": "var(--card)",
+  "--dt-border": "var(--border)",
+  "--dt-muted-foreground": "var(--muted-foreground)",
+  "--dt-primary": "var(--primary)",
+  "--dt-primary-foreground": "var(--primary-foreground)",
+  "--dt-destructive": "var(--destructive)",
+  "--dt-font-sans": "var(--font-sans)",
+  "--dt-font-mono": "var(--font-mono)",
+};
+const THEMED: Record<string, string | number> = { ...FILL, ...THEME_ALIASES, background: "var(--background)", color: "var(--foreground)" };
+
 export function FoundryPanel() {
   const sidebar = experimental_useSidebarThreads();
   const api = useRef<LiveApi | null>(null);
@@ -58,12 +75,12 @@ export function FoundryPanel() {
 
   if (!page) {
     const message = failed ? "Couldn't load threads. Foundry will draw them when the thread list is available." : "Loading threads…";
-    return createElement("div", { style: { ...FILL, paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: `calc(${CHROME_TOP} + 16px)`, opacity: 0.7 } }, message);
+    return createElement("div", { style: { ...THEMED, paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: `calc(${CHROME_TOP} + 16px)` } }, message);
   }
   // The pane is laid out against this wrapper (position: relative), which sits below the chrome row.
   return createElement(
     "div",
-    { style: FILL },
+    { style: THEMED },
     createElement(
       "div",
       { style: { position: "relative", flex: "1 1 0%", minHeight: 0, minWidth: 0 } },
@@ -72,7 +89,7 @@ export function FoundryPanel() {
     failed
       ? createElement(
           "div",
-          { style: { position: "absolute", left: 8, top: 8, padding: "4px 8px", borderRadius: 6, background: "rgba(0,0,0,0.7)", color: "#fff", fontSize: 12 } },
+          { style: { position: "absolute", left: 8, top: 8, padding: "4px 8px", borderRadius: 6, background: "var(--card)", color: "var(--foreground)", border: "1px solid var(--border)", fontSize: 12 } },
           "Thread list unavailable — showing the last known state",
         )
       : null,

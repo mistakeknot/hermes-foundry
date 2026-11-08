@@ -20,12 +20,15 @@ const h = (type: unknown, props: Record<string, unknown> | null, ...kids: Child[
 const V = (name: string, fb: string) => `var(--dt-${name}, ${fb})`
 const C = {
   fg: V('foreground', '#e9eadf'), bg: V('background', '#1a201d'), card: V('card', '#232b27'), border: V('border', '#3a443e'),
-  muted: V('muted-foreground', '#9aa59c'), primary: V('primary', '#e6a93c'), danger: V('destructive', '#c2483a'),
+  muted: V('muted-foreground', '#9aa59c'), primary: V('primary', '#e6a93c'), onPrimary: V('primary-foreground', '#1a1a14'), danger: V('destructive', '#c2483a'),
 }
 const mono = V('font-mono', 'ui-monospace, monospace')
 const sans = V('font-sans', 'system-ui, sans-serif')
-const ON_DARK = '#eef2e6'
-const ON_DARK_MUTED = '#b8c2b6'
+// Text drawn over the 3D stage takes the host's foreground (the stage background is the host's background), so it reads
+// in a light theme as well as a dark one.
+const ON_DARK = C.fg
+const ON_DARK_MUTED = C.muted
+const TEXT_HALO = `0 1px 3px ${C.bg}`
 const hex = (n: number) => '#' + n.toString(16).padStart(6, '0')
 const NATIVE_CHOICES = ['todo', 'ready', 'running', 'blocked', 'review', 'done']
 /** how long a status/assign choice stays disabled waiting for the board to show the new value */
@@ -33,7 +36,7 @@ const RECONCILE_MS = 4000
 
 const btn = (primary = false): Record<string, unknown> => ({
   font: `12px ${sans}`, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
-  border: `1px solid ${primary ? C.primary : C.border}`, background: primary ? C.primary : 'transparent', color: primary ? '#1a1a14' : C.fg,
+  border: `1px solid ${primary ? C.primary : C.border}`, background: primary ? C.primary : 'transparent', color: primary ? C.onPrimary : C.fg,
 })
 /** One-click choice: the current value is marked (and ignores clicks, but stays focusable), anything else acts on click. */
 const choiceBtn = (id: string, label: string, current: boolean, busy: boolean, onClick: () => unknown, ref?: unknown) =>
@@ -133,7 +136,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
         onSlip: () => audioRef.current?.play('slip'),
         onDrop: (req) => {
           const sn = snapRef.current
-          const ui = sn ? dropUi(req, sn) : null
+          const ui = sn && !sn.read_only ? dropUi(req, sn) : null
           if (!ui) return
           setTip(null)
           setPick(ui.pick)
@@ -229,12 +232,12 @@ function FoundryPage({ rest }: { rest: Rest }) {
   }, [snap])
 
   const header = h('div', { style: { position: 'absolute', top: 10, left: 12, right: 12, display: 'flex', gap: narrow ? 6 : 10, alignItems: 'center', pointerEvents: 'none', flexWrap: 'wrap' } },
-    h('div', { style: { font: `600 14px ${sans}`, color: ON_DARK, textShadow: '0 1px 3px #000' } }, 'Foundry'),
+    h('div', { style: { font: `600 14px ${sans}`, color: ON_DARK, textShadow: TEXT_HALO } }, 'Foundry'),
     simulated ? h('span', { id: 'foundry-simulated', style: { ...chip('#e6a93c'), pointerEvents: 'auto' }, title: 'Showing fixture data; actions do not reach a live Hermes board' }, 'simulated') : null,
     snap?.paused ? h('span', { style: chip('#6fd3ff') }, 'standing') : null,
     h('button', { id: 'foundry-sound', type: 'button', 'aria-pressed': sound, title: sound ? 'Turn the small sound cues off' : 'Turn on small sound cues (assign, stand, slip, blocked)', onClick: toggleSound, style: { ...chip(sound ? '#9fd8a0' : '#5a655d'), border: 0, cursor: 'pointer', pointerEvents: 'auto', color: sound ? '#16160f' : ON_DARK } }, sound ? 'sound on' : 'sound off'),
     link === 'error' ? h('span', { style: chip(hex(STATUS_COLOR.blocked)) }, 'reconnecting') : null,
-    h('div', { style: { marginLeft: 'auto', display: 'flex', gap: narrow ? 7 : 10, font: `${narrow ? 10 : 11}px ${sans}`, color: ON_DARK_MUTED, textShadow: '0 1px 3px #000' } },
+    h('div', { style: { marginLeft: 'auto', display: 'flex', gap: narrow ? 7 : 10, font: `${narrow ? 10 : 11}px ${sans}`, color: ON_DARK_MUTED, textShadow: TEXT_HALO } },
       (['open', 'running', 'blocked', 'review', 'done'] as const).map((k) => h('span', { key: k, style: { display: 'inline-flex', gap: 4, alignItems: 'center' } },
         h('i', { style: { width: 9, height: 9, borderRadius: 2, background: hex(STATUS_COLOR[k]), display: 'inline-block' } }), `${k} ${counts[k]}`)),
       counts.unknown ? h('span', { style: { display: 'inline-flex', gap: 4, alignItems: 'center' } }, h('i', { style: { width: 9, height: 9, borderRadius: 2, background: hex(STATUS_COLOR.unknown), display: 'inline-block' } }), `other ${counts.unknown}`) : null))
@@ -248,7 +251,7 @@ function FoundryPage({ rest }: { rest: Rest }) {
     tip ? h('div', { style: { position: 'absolute', left: tip.x, top: tip.y, background: C.card, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '3px 8px', font: `11px ${sans}`, pointerEvents: 'none', maxWidth: 280, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, tip.label) : null,
     !webgl ? h('div', { style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: ON_DARK_MUTED, font: `13px ${sans}` } }, 'WebGL is not available in this window.') : null,
     !snap && webgl ? h('div', { style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: ON_DARK_MUTED, font: `13px ${sans}`, pointerEvents: 'none' } }, 'Waking the valley…') : null,
-    h('div', { style: { position: 'absolute', left: 12, right: 12, bottom: 10, font: `${narrow ? 10 : 11}px ${sans}`, color: ON_DARK_MUTED, textShadow: '0 1px 3px #000', pointerEvents: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, narrow ? 'drag orbit · scroll zoom · click to open · double-click a creature' : 'drag to orbit · scroll to zoom · click a scale, carving or climber · double-click a creature to approach'))
+    h('div', { style: { position: 'absolute', left: 12, right: 12, bottom: 10, font: `${narrow ? 10 : 11}px ${sans}`, color: ON_DARK_MUTED, textShadow: TEXT_HALO, pointerEvents: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, narrow ? 'drag orbit · scroll zoom · click to open · double-click a creature' : 'drag to orbit · scroll to zoom · click a scale, carving or climber · double-click a creature to approach'))
 
   const panel = h('div', { id: 'foundry-panel', style: { width: panelWidthFor(paneW), flex: 'none', borderLeft: `1px solid ${C.border}`, background: C.card, color: C.fg, font: `13px ${sans}`, overflowY: 'auto', padding: narrow ? '10px 12px' : '12px 14px' } },
     snap ? Panel({ snap, state: state!, pick, setPick, run, busyIds, notice, simulated, api: api!, scene: sceneRef, assignReq, clearAssignReq: () => setAssignReq(null), pinComment: !shortPane }) : null)
@@ -343,6 +346,7 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null; no
     snap.projects.forEach((x) => x.cards.forEach((c) => { if (c.assignee_profile) s.add(c.assignee_profile) }))
     return [...s].sort()
   }, [snap, p.simulated])
+  const ro = !!p.snap.read_only // the bb panel only reads: no status moves, profile assignment or comments
   const busy = p.busyIds.includes(card.id)
   const assign = (name: string) => p.run({ type: 'assign', card_id: card.id, profile: name },
     // Hermes' dispatcher may start a ready card once it has a profile, so the live notice must not promise it will not
@@ -359,8 +363,10 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null; no
       card.blocked_on === 'human' ? h('span', { id: 'foundry-blocked-human', style: chip('#6fd3ff') }, 'waiting on you') : null),
     h('div', { style: { color: C.muted, marginTop: 8 } }, 'Profile: ', h('span', { style: { color: C.fg } }, card.assignee_profile ?? 'unassigned')),
     h('div', { style: { color: C.muted } }, 'Held by: ', h('span', { style: { color: C.fg } }, p.holderName ?? (card.claimed_by ? `${card.claimed_by} (unknown worker)` : 'nobody'))),
+    ro ? h('div', { id: 'foundry-readonly', style: { color: C.muted, fontSize: 11, marginTop: 8 } }, 'Read-only: Foundry shows your bb threads and does not change them.') : null,
     card.docs.length ? sect('Carvings') : null,
     ...card.docs.map((d) => h('div', { key: d.path, style: { padding: '2px 0', cursor: 'pointer', color: C.primary }, onClick: () => setPick({ kind: 'doc', cardId: card.id, path: d.path, title: d.title }) }, `▫ ${d.title}`)),
+    ...(ro ? [] : [
     sect('Move to'),
     h('div', { style: row, role: 'group', 'aria-label': 'Set status' },
       ...choices.map((n) => choiceBtn(`foundry-status-${n}`, n, n === card.status_native, busy, () => p.run({ type: 'set_status', card_id: card.id, status_native: n }, `Moved to ${n}`)))),
@@ -375,12 +381,13 @@ function CardActions(p: PanelProps & { card: Card; holderName: string | null; no
       ? h('div', { style: row },
         h('input', { id: profiles.length ? 'foundry-profile-new' : 'foundry-profile', ref: profiles.length ? undefined : profileRef, style: { ...field, flex: 1 }, value: profile, placeholder: profiles.length ? 'another profile' : 'profile', onChange: (e: any) => setProfile(e.target.value), onKeyDown: (e: any) => { if (e.key === 'Enter' && !busy && profile.trim()) assign(profile.trim()) } }),
         h('button', { id: 'foundry-assign', style: btn(true), disabled: busy || !profile.trim(), onClick: () => assign(profile.trim()) }, 'Assign'))
-      : null,
+      : null
+    ]),
     h('div', { ref: endRef, style: { height: 0 } }),
     comments.length ? h('div', null, sect('Comments'), ...comments.map((c, i) => h('div', { key: i, style: { padding: '3px 0', fontSize: 12 } }, h('b', null, c.author), `: ${c.text}`))) : null,
     // The comment box and the result line stay pinned to the bottom of the panel, so a tall card view in a short pane never
     // pushes them below the fold. Negative margins let the pinned block cover the panel's own padding.
-    h('div', { id: 'foundry-comment-dock', ref: dockRef, style: p.pinComment === false ? { marginTop: 4 } : { position: flowDock ? 'static' : 'sticky', bottom: 0, margin: '8px -14px -12px', padding: '0 14px 10px', background: C.card, borderTop: `1px solid ${C.border}` } },
+    ro ? null : h('div', { id: 'foundry-comment-dock', ref: dockRef, style: p.pinComment === false ? { marginTop: 4 } : { position: flowDock ? 'static' : 'sticky', bottom: 0, margin: '8px -14px -12px', padding: '0 14px 10px', background: C.card, borderTop: `1px solid ${C.border}` } },
       sect('Comment'),
       h('div', { style: { ...row, flexDirection: 'column', marginTop: 0 } },
         h('textarea', { id: 'foundry-comment', rows: 2, style: { ...field, resize: 'none' }, value: text, placeholder: 'Write a comment…', onChange: (e: any) => setText(e.target.value) }),

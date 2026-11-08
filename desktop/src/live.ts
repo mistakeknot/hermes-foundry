@@ -91,7 +91,7 @@ export function buildLiveShape(input: LiveInput, opts: LiveOptions = {}): LiveSh
     }))
     .sort((a, b) => (a.id < b.id ? -1 : 1))
   workers.sort((a, b) => (a.id < b.id ? -1 : 1))
-  return { v: 1, mode: 'live', projects, workers, paused: false }
+  return { v: 1, mode: 'live', read_only: true, projects, workers, paused: false }
 }
 
 const MAX_LOG = 1000
@@ -102,7 +102,7 @@ const MAX_LOG = 1000
  */
 export class LiveApi implements FoundryApi {
   readonly simulated = false
-  private shape: LiveShape = { v: 1, mode: 'live', projects: [], workers: [], paused: false }
+  private shape: LiveShape = { v: 1, mode: 'live', read_only: true, projects: [], workers: [], paused: false }
   private seq = 0
   private base = 0 // log holds events with seq > base
   private log: FoundryEvent[] = []

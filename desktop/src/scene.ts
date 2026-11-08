@@ -1,4 +1,6 @@
 // three.js scene: valley, creatures (torso + lofted limbs + instanced scales + carvings), climbers, orbit camera, picking.
+import { FLOOR_Y, valleyHeight, valleySize, type Phases } from './terrain'
+import { resolveCssColor, luminance } from './themecolor'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildCreature, frameAt, layoutCreatures, type CreatureSpec, type LimbSpec, type Material, type V3 } from './creature'
@@ -89,6 +91,8 @@ interface ClimberView {
   slipping?: boolean
 }
 
+const DEFAULT_BG = 0x0c1210
+
 export class FoundryScene {
   readonly renderer: THREE.WebGLRenderer
   readonly scene = new THREE.Scene()
@@ -134,13 +138,14 @@ export class FoundryScene {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true })
     this.renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2))
     this.renderer.shadowMap.enabled = false
-    this.scene.background = new THREE.Color(0x0c1210)
-    this.scene.fog = new THREE.FogExp2(0x0c1210, 0.015)
+    this.scene.background = new THREE.Color(DEFAULT_BG)
+    this.scene.fog = new THREE.FogExp2(DEFAULT_BG, 0.015)
     this.scene.add(new THREE.HemisphereLight(0xa9c4cc, 0x120e0a, 0.8))
     const sun = new THREE.DirectionalLight(0xffd9a6, 3.0)
     sun.position.set(30, 45, 20)
     this.scene.add(sun)
     this.buildValley()
+    this.applyTheme()
     this.selection.visible = false
     this.selection.rotation.x = Math.PI / 2
     this.selection.renderOrder = 10
@@ -170,44 +175,89 @@ export class FoundryScene {
   }
 
   // ---------------- valley ----------------
-  private buildValley() {
-    const size = 140, seg = 96
+  private ground: THREE.Mesh | null = null
+  private floorRadius = -1
+  private readonly groundPhases: Phases = (() => { const r = rng(7); return [r() * 6, r() * 6, r() * 6] as Phases })()
+  private readonly groundLow = new THREE.Color(0x3a4a2d)
+  private readonly groundHigh = new THREE.Color(0x4d4c46)
+  private static readonly LICHEN = 0x3a4a2d
+  private static readonly STONE = 0x4d4c46
+
+  /** (Re)shape the ground so a flat floor holds every creature; the rim only starts beyond `floorRadius`. */
+  private shapeValley(floorRadius: number) {
+    const R = Math.ceil(floorRadius / 2) * 2 // quantised, so a creature moving a hair does not rebuild the terrain
+    if (R === this.floorRadius) return
+    this.floorRadius = R
+    const size = valleySize(R), seg = Math.min(160, Math.max(96, Math.round(size * 0.7)))
     const g = new THREE.PlaneGeometry(size, size, seg, seg)
     g.rotateX(-Math.PI / 2)
     const pos = g.attributes.position as THREE.BufferAttribute
     const col = new Float32Array(pos.count * 3)
-    const r = rng(7)
-    const ph = [r() * 6, r() * 6, r() * 6]
     const c = new THREE.Color()
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), z = pos.getZ(i)
-      const d = Math.hypot(x, z)
-      const bowl = Math.min(1, d / 55)
-      const h = bowl * bowl * 22 + Math.sin(x * 0.11 + ph[0]) * 1.1 + Math.cos(z * 0.13 + ph[1]) * 1.0 + Math.sin((x + z) * 0.31 + ph[2]) * 0.35
-      pos.setY(i, h - 1.2)
-      const t = Math.min(1, Math.max(0, h / 14))
-      c.setHex(0x3a4a2d).lerp(new THREE.Color(0x4d4c46), t) // lichen floor to bare stone on the rim
+      const h = valleyHeight(x, z, R, this.groundPhases)
+      pos.setY(i, h)
+      const t = Math.min(1, Math.max(0, (h - FLOOR_Y) / 14))
+      c.copy(this.groundLow).lerp(this.groundHigh, t) // lichen floor to bare stone on the rim
       const n = (Math.sin(x * 1.7) * Math.cos(z * 1.9) + 1) * 0.04
       col[i * 3] = c.r * (0.9 + n); col[i * 3 + 1] = c.g * (0.9 + n); col[i * 3 + 2] = c.b * (0.9 + n)
     }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3))
     g.computeVertexNormals()
-    const ground = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1 }))
-    this.scene.add(ground)
-    // scattered boulders and coral-like tufts
+    if (this.ground) { this.scene.remove(this.ground); disposeTree(this.ground) }
+    this.ground = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1 }))
+    this.scene.add(this.ground)
+    this.placeRocks(R)
+  }
+
+  private buildValley() {
+    this.shapeValley(10)
+  }
+
+  private rocks: THREE.InstancedMesh | null = null
+  /** Boulders sit beyond the creatures' floor, never among them. */
+  private placeRocks(R: number) {
+    if (this.rocks) { this.scene.remove(this.rocks); disposeTree(this.rocks) }
     const rr = rng(99)
-    const rockGeo = new THREE.IcosahedronGeometry(1, 0)
-    const rocks = new THREE.InstancedMesh(rockGeo, new THREE.MeshStandardMaterial({ color: 0x3b3a36, flatShading: true, roughness: 1 }), 70)
+    const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: 0x3b3a36, flatShading: true, roughness: 1 }), 70)
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
     for (let i = 0; i < 70; i++) {
-      const a = rr() * 6.283, d = 14 + rr() * 38
+      const a = rr() * 6.283, d = R + 4 + rr() * 38
       const s = 0.4 + rr() * 1.6
       e.set(rr() * 3, rr() * 3, rr() * 3); q.setFromEuler(e)
-      m.compose(new THREE.Vector3(Math.cos(a) * d, -0.6, Math.sin(a) * d), q, new THREE.Vector3(s, s * 0.7, s))
+      const x = Math.cos(a) * d, z = Math.sin(a) * d
+      m.compose(new THREE.Vector3(x, valleyHeight(x, z, R, this.groundPhases) - 0.4, z), q, new THREE.Vector3(s, s * 0.7, s))
       rocks.setMatrixAt(i, m)
     }
+    this.rocks = rocks
     this.scene.add(rocks)
   }
+
+  // ---------------- theme ----------------
+  private themeSig = ''
+  private themeBg = DEFAULT_BG
+  /**
+   * Follow the host's colors: the scene background and fog take the pane's resolved `--dt-background`, so the 3D stage
+   * matches the surrounding UI in bb's light and dark themes. Cheap to call; it only acts when the value changed.
+   */
+  applyTheme() {
+    if (this.disposed) return
+    let raw = ''
+    try { raw = getComputedStyle(this.canvas as unknown as Element).getPropertyValue('--dt-background') } catch { /* canvas stand-in without styles */ }
+    if (raw === this.themeSig) return
+    this.themeSig = raw
+    const hex = resolveCssColor(raw) ?? DEFAULT_BG
+    this.themeBg = hex
+    ;(this.scene.background as THREE.Color).setHex(hex)
+    if (this.scene.fog) this.scene.fog.color.setHex(hex)
+    // the ground borrows the host's tone, so a light theme gets a pale floor and a dark one a deep floor
+    const bg = new THREE.Color(hex), k = luminance(hex) > 0.5 ? 0.78 : 0.55
+    this.groundLow.setHex(FoundryScene.LICHEN).lerp(bg, k)
+    this.groundHigh.setHex(FoundryScene.STONE).lerp(bg, k)
+    if (this.ground) { this.floorRadius = -1; this.shapeValley(Math.max(this.reachR, 10)) } // repaint the vertex colors
+  }
+  private reachR = 10
 
   // ---------------- data ----------------
   update(snap: Snapshot) {
@@ -216,6 +266,11 @@ export class FoundryScene {
     this.totalCards = snap.projects.reduce((n, p) => n + p.cards.length, 0)
     const specs = snap.projects.map(buildCreature)
     const spots = layoutCreatures(specs)
+    // the floor must hold every creature's footprint, whatever the ring's size
+    let reach = 0
+    specs.forEach((sp, i) => { reach = Math.max(reach, Math.hypot(spots[i][0], spots[i][2]) + sp.radius) })
+    this.reachR = reach + 8
+    this.shapeValley(this.reachR)
     const seen = new Set<string>()
     specs.forEach((spec, i) => {
       seen.add(spec.projectId)
@@ -865,6 +920,7 @@ export class FoundryScene {
     const dt = Math.min(this.clock.getDelta(), 0.1)
     const t = this.clock.elapsedTime
     this.flushResize()
+    if ((this.frameCount & 31) === 0) this.applyTheme()
     if (this.focus) {
       this.focus.t = Math.min(1, this.focus.t + dt * 2.5)
       const k = this.focus.t * this.focus.t * (3 - 2 * this.focus.t) // ease in and out

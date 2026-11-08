@@ -22,6 +22,8 @@ export interface Worker { id: string; name: string; state: WorkerState; card_id:
 export interface Snapshot {
   v: 1
   mode: 'fixture' | 'live'
+  /** true when the source cannot take commands (the bb host's panel): the pane then hides every control that would write */
+  read_only?: boolean
   epoch: string
   cursor: string
   last_seq: number

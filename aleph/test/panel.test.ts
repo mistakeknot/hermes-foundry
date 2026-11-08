@@ -16,7 +16,7 @@ vi.mock('../../desktop/src/plugin', () => ({
   },
 }))
 
-import { FoundryPanel } from '../src/panel'
+import { FoundryPanel, THEME_ALIASES } from '../src/panel'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -49,6 +49,17 @@ describe('FoundryPanel lifecycle', () => {
     const wrapper = outer.firstElementChild as HTMLElement
     expect(wrapper.style.position).toBe('relative')
     expect((wrapper.firstElementChild as HTMLElement).style.position).toBe('absolute')
+  })
+
+  it('aliases the pane\'s theme variables to bb\'s on the wrapper and uses bb colors for the stale banner', () => {
+    state.sidebar = ready('First')
+    paint()
+    const outer = host.firstElementChild as HTMLElement
+    for (const [k, v] of Object.entries(THEME_ALIASES)) expect(outer.style.getPropertyValue(k)).toBe(v)
+    expect(THEME_ALIASES['--dt-background']).toBe('var(--background)')
+    state.sidebar = { ...ready('First'), status: 'error' }
+    paint()
+    expect(host.innerHTML).not.toContain('rgba(0, 0, 0')
   })
 
   it('does not mount the pane when the thread list fails first, and mounts it live after recovery', async () => {
