@@ -10,6 +10,13 @@ import { fromSidebar } from "./from-sidebar";
 // How often the board re-reads the clock. A card turns "done" after a day idle, which no sidebar update announces.
 const CLOCK_TICK_MS = 60_000;
 
+// bb gives a panel a body that runs under its title bar (the traffic lights and the "Foundry" title) and under the
+// navigation rail's edge, and expects the panel to leave `--bb-app-chrome-row-height` free at the top. A panel body that
+// is absolutely positioned against the window instead (as this one first was) draws its header under the title bar and
+// centres the valley on a box wider than what is visible, so the scene looks cropped.
+const CHROME_TOP = "var(--bb-app-chrome-row-height, 3rem)";
+const FILL: Record<string, string | number> = { display: "flex", flexDirection: "column", flex: "1 1 0%", minHeight: 0, minWidth: 0, width: "100%", height: "100%", boxSizing: "border-box", paddingTop: CHROME_TOP };
+
 export function FoundryPanel() {
   const sidebar = experimental_useSidebarThreads();
   const api = useRef<LiveApi | null>(null);
@@ -51,12 +58,16 @@ export function FoundryPanel() {
 
   if (!page) {
     const message = failed ? "Couldn't load threads. Foundry will draw them when the thread list is available." : "Loading threads…";
-    return createElement("div", { style: { padding: 16, opacity: 0.7 } }, message);
+    return createElement("div", { style: { ...FILL, paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: `calc(${CHROME_TOP} + 16px)`, opacity: 0.7 } }, message);
   }
+  // The pane is laid out against this wrapper (position: relative), which sits below the chrome row.
   return createElement(
     "div",
-    { style: { position: "absolute", inset: 0, minHeight: 0 } },
-    page as never,
+    { style: FILL },
+    createElement(
+      "div",
+      { style: { position: "relative", flex: "1 1 0%", minHeight: 0, minWidth: 0 } },
+      createElement("div", { style: { position: "absolute", inset: 0 } }, page as never),
     // After the first data, a later failure keeps the last board but says it may be out of date.
     failed
       ? createElement(
@@ -65,5 +76,6 @@ export function FoundryPanel() {
           "Thread list unavailable — showing the last known state",
         )
       : null,
+    ),
   );
 }
