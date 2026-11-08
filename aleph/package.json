@@ -6,7 +6,7 @@
   "description": "Foundry for Aleph/bb: a 3D board of your bb projects and threads",
   "engines": {
     "bb": ">=0.48",
-    "bbPluginSdk": ">=0.6.132"
+    "bbPluginSdk": ">=0.6.100"
   },
   "bb": {
     "name": "Foundry",
