@@ -89,6 +89,39 @@ describe('FoundryPanel lifecycle', () => {
     expect(state.registers).toBe(1)
   })
 
+  it('puts the Foundry pane to the right of the board, in the same row, only once there is data', () => {
+    state.sidebar = { status: 'loading' }
+    paint()
+    expect(host.querySelector('[data-foundry=pane]')).toBeNull()
+    state.sidebar = ready('First')
+    paint()
+    const outer = host.firstElementChild as HTMLElement
+    expect(outer.style.flexDirection).toBe('row')
+    expect([...outer.children].map((c) => c.getAttribute('data-foundry'))).toEqual([null, 'pane'])
+    expect((outer.lastElementChild as HTMLElement).style.width).toBe('22%')
+  })
+
+  it('opens the drawer for a creature, and keeps the outline (and drawer) when the list fails later', () => {
+    state.sidebar = ready('First')
+    paint()
+    const alpha = [...host.querySelectorAll<HTMLElement>('[data-foundry=creature]')].find((e) => e.textContent === 'Alpha')!
+    act(() => { alpha.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(host.querySelector('[data-foundry=drawer]')).not.toBeNull()
+    state.sidebar = { status: 'error' }
+    paint()
+    expect(host.querySelector('[data-foundry=drawer]')).not.toBeNull()
+  })
+
+  it('closes the drawer when the selected creature leaves the thread list', () => {
+    state.sidebar = ready('First')
+    paint()
+    const alpha = [...host.querySelectorAll<HTMLElement>('[data-foundry=creature]')].find((e) => e.textContent === 'Alpha')!
+    act(() => { alpha.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    state.sidebar = { ...ready('First'), projects: [{ id: 'p2', name: 'Beta' }], threads: [] }
+    paint()
+    expect(host.querySelector('[data-foundry=drawer]')).toBeNull()
+  })
+
   it('re-reads the clock on a timer, so an idle card turns done without any sidebar update', async () => {
     vi.useFakeTimers()
     const t0 = new Date('2026-11-06T12:00:00Z').getTime()

@@ -32,6 +32,28 @@ working and waiting threads are taken first, then the most recently touched.
 The pane's command buttons (pause, reset and the like) answer with a read-only error: *"Foundry is read-only here: it shows
 threads but does not act on them yet."* Nothing is sent to any thread.
 
+## The Foundry pane (right-hand side)
+
+The panel is a row: the board on the left, the Foundry pane on the right (22% of the width, 260 to 420 px). The pane is a
+stacked column: a picker row (creatures, then the chosen creature's limbs), the thread filling the rest, and an inspector
+drawer at the bottom that opens when a creature or limb is selected and closes on the same choice again or on ✕.
+
+| Foundry | bb |
+| --- | --- |
+| creature | project |
+| limb | sidebar section (plus **Unsorted**: threads in no section) |
+| card | thread |
+
+A selection is attached to the thread as context (`Context: Alpha › Docs`), and a form edit shows in the thread as a line.
+The pane follows bb's theme through its CSS variables and never writes to bb: its lines live in the plugin only.
+
+Two seams are left for later beads, both in `src/thread-port.ts`: `ThreadComponent` (the real Foundry thread replaces
+`PlaceholderThread`) and `InspectorComponent` (the lineage, name and section forms replace `PlaceholderInspector`; the form
+calls `onEdit(text)` to record an edit). Selection is made in the picker for now: the board's own click selection lives
+inside the shared Hermes pane and is not exported, and exporting it needs a change under `desktop/src`.
+
+Layout: `src/layout.ts`. Selection and the outline: `src/selection.ts`. Pane state: `src/pane-state.ts`. The pane: `src/pane.ts`.
+
 ## Sections
 
 `src/sections/` holds the host-agnostic sections interface (list, create, rename, remove sections; move a card between
@@ -42,6 +64,7 @@ backend comes later. Any backend must pass the contract suite in `test/sections/
 ## Build and test
 
 ```
+(cd desktop && npm install)   # the type-check needs the pane's own dependencies (three)
 cd aleph
 npm install
 npm run typecheck
