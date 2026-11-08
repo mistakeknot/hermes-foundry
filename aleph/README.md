@@ -32,6 +32,13 @@ working and waiting threads are taken first, then the most recently touched.
 The pane's command buttons (pause, reset and the like) answer with a read-only error: *"Foundry is read-only here: it shows
 threads but does not act on them yet."* Nothing is sent to any thread.
 
+## Sections
+
+`src/sections/` holds the host-agnostic sections interface (list, create, rename, remove sections; move a card between
+them; per project), an in-memory backend, and the Hermes backend (a Foundry file per board beside the kanban). The bb
+backend comes later. Any backend must pass the contract suite in `test/sections/contract.ts`. See
+[`docs/sections-file.md`](../docs/sections-file.md). Nothing in the panel uses it yet.
+
 ## Build and test
 
 ```
