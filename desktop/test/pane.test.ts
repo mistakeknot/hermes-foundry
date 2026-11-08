@@ -780,3 +780,46 @@ describe('sound cues in the pane', () => {
     expect(oscTotal(made)).toBe(first)
   }, 20000)
 })
+
+describe('read-only live mode (the bb panel)', () => {
+  it('shows a card without the Hermes write controls and ignores a drop', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live', read_only: true }
+    const posts: unknown[] = []
+    const rest: Rest = async (path, opts) => {
+      if (opts?.method && opts.method !== 'GET') { posts.push(path); return { ok: true } }
+      if (path.startsWith('/snapshot')) return snap
+      if (path.startsWith('/events')) return { v: 1, epoch: snap.epoch, cursor: snap.cursor, events: [], resync: false }
+      throw new Error('unexpected ' + path)
+    }
+    const card = snap.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
+    const scene = await mount(rest)
+    await waitFor(() => !!document.querySelector('canvas') && !document.getElementById('foundry-simulated'), 'the live pane')
+    await tick(60)
+    await act(async () => { scene.cb.onPick({ kind: 'card', id: card.id }) })
+    await waitFor(() => document.body.textContent!.includes(card.title), 'the card panel')
+    expect(document.getElementById('foundry-readonly')).not.toBeNull()
+    for (const id of ['foundry-comment-dock', 'foundry-comment', 'foundry-comment-send', 'foundry-assign', 'foundry-profile']) expect(document.getElementById(id), id).toBeNull()
+    expect(document.body.textContent).not.toContain('Move to')
+    expect(document.body.textContent).not.toContain('Assign profile')
+    await dragOnto(scene, snap.workers[0].id, card.id)
+    await tick()
+    expect(document.getElementById('foundry-profile')).toBeNull()
+    expect(posts).toEqual([])
+  })
+  it('keeps the controls on a writable live board', async () => {
+    const snap: Snapshot = { ...buildFixture(), mode: 'live' }
+    const rest: Rest = async (path) => {
+      if (path.startsWith('/snapshot')) return snap
+      if (path.startsWith('/events')) return { v: 1, epoch: snap.epoch, cursor: snap.cursor, events: [], resync: false }
+      throw new Error('unexpected ' + path)
+    }
+    const card = snap.projects.flatMap((p) => p.cards).find((c) => c.claimed_by === null)!
+    const scene = await mount(rest)
+    await waitFor(() => !!document.querySelector('canvas'), 'the live pane')
+    await tick(60)
+    await act(async () => { scene.cb.onPick({ kind: 'card', id: card.id }) })
+    await waitFor(() => !!document.getElementById('foundry-comment-dock'), 'the card panel')
+    expect(document.getElementById('foundry-readonly')).toBeNull()
+    expect(document.body.textContent).toContain('Move to')
+  })
+})
