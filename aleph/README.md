@@ -27,6 +27,12 @@ A thread has no "done" of its own, so the status is a reading, in this order:
 Archived and hidden threads are not drawn, and a project with no drawn thread has no board. At most 240 cards are drawn;
 working and waiting threads are taken first, then the most recently touched.
 
+The pane's picker uses the same filter and the same cap. `buildOutline` (`src/selection.ts`) does not filter threads itself:
+it runs the board's own `buildLiveShape` over the same sidebar state and reads the creatures, limbs and cards from that
+result. So the picker never offers a creature, limb or card the board does not draw (no "Omitted" limb, no card without a
+board counterpart), and a project whose threads are all archived, hidden or past the cap has no creature, as it has no
+board. Tests with more than 240 threads, and a check that the outline and the board hold the same cards, guard this.
+
 ## Command buttons
 
 The pane's command buttons (pause, reset and the like) answer with a read-only error: *"Foundry is read-only here: it shows

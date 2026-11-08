@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { SidebarStateLike, SidebarThreadLike } from '../src/from-sidebar'
+import { buildLiveShape } from '../../desktop/src/live'
+import { fromSidebar, type SidebarStateLike, type SidebarThreadLike } from '../src/from-sidebar'
 import { buildOutline, contextFor, sameSelection, toggleSelection, UNSORTED, type Selection } from '../src/selection'
 import { initialPaneState, MAX_LINES, paneReducer } from '../src/pane-state'
 import { DRAWER_MAX_PCT, PANE_WIDTH_PCT, paneLayout } from '../src/layout'
@@ -35,9 +36,61 @@ describe('outline', () => {
     expect(outline[0].threadIds).not.toContain('e')
     expect(outline[0].threadIds).not.toContain('f')
   })
-  it('gives a project with no sections only Unsorted, and one with no threads no limbs', () => {
+  it('gives a project with no sections only Unsorted, and a project with no drawn thread no creature (it has no board)', () => {
     expect(outline[1].limbs.map((l) => l.name)).toEqual([UNSORTED])
-    expect(buildOutline({ ...state, threads: [] })[0].limbs).toEqual([])
+    expect(buildOutline({ ...state, threads: [] })).toEqual([])
+    expect(buildOutline({ ...state, threads: [t('g', 'p2', null)] }).map((c) => c.projectId)).toEqual(['p2'])
+  })
+  it('leaves out a thread whose project the sidebar does not list', () => {
+    expect(buildOutline({ ...state, threads: [t('x', 'nope', null), t('g', 'p2', null)] }).map((c) => c.projectId)).toEqual(['p2'])
+  })
+})
+
+// The picker must offer exactly what the board draws. The board caps at 240 cards (working and waiting first, then newest),
+// so with more threads than that the outline has to cap the same way, never show an 'Omitted' limb or an undrawn card.
+const CAP = 240
+const boardCards = (s: SidebarStateLike, opts = {}) => buildLiveShape(fromSidebar(s, 0), opts).projects.flatMap((p) => p.cards.map((c) => ({ projectId: p.id, threadId: c.id.slice(p.id.length + 1), epic: c.epic_id })))
+const outlineCards = (o: ReturnType<typeof buildOutline>) => o.flatMap((c) => c.limbs.flatMap((l) => l.threadIds.map((threadId) => ({ projectId: c.projectId, threadId, epic: l.sectionId }))))
+const keyed = (xs: { projectId: string; threadId: string; epic: string | null }[]) => xs.map((x) => `${x.projectId}/${x.threadId}/${x.epic}`).sort()
+const many = (n: number): SidebarThreadLike[] => Array.from({ length: n }, (_, i) => t(`t${String(i).padStart(4, '0')}`, i % 2 ? 'p1' : 'p2', i % 3 === 0 ? 's1' : i % 3 === 1 ? 's2' : null, { updatedAt: i }))
+
+describe('outline matches the board past the 240-card cap', () => {
+  it('draws no more than 240 threads and keeps the newest', () => {
+    const o = buildOutline({ ...state, threads: many(300) })
+    const ids = o.flatMap((c) => c.threadIds)
+    expect(ids).toHaveLength(CAP)
+    expect(ids).toContain('t0299')
+    expect(ids).not.toContain('t0059')
+    expect(ids).toContain('t0060')
+    expect(o.flatMap((c) => c.limbs.flatMap((l) => l.threadIds))).toHaveLength(CAP)
+  })
+  it('takes working and waiting threads before newer idle ones, as the board does', () => {
+    const old = [t('wait', 'p1', null, { updatedAt: -5, hasPendingInteraction: true }), t('run', 'p1', 's1', { updatedAt: -4, status: 'active' }), t('err', 'p1', null, { updatedAt: -3, status: 'error' })]
+    const o = buildOutline({ ...state, threads: [...many(300), ...old] })
+    const ids = o.flatMap((c) => c.threadIds)
+    expect(ids).toHaveLength(CAP)
+    expect(ids).toEqual(expect.arrayContaining(['wait', 'run', 'err']))
+    expect(ids).not.toContain('t0061') // pushed out by the three old but active threads
+  })
+  it('has the same cards, creatures and sections as the board, so it cannot drift from it', () => {
+    for (const n of [0, 1, 239, 240, 241, 500]) {
+      const s = { ...state, threads: [...many(n), t('arch', 'p1', 's1', { isArchived: true, updatedAt: 1e9 }), t('hid', 'p2', null, { isHidden: true, updatedAt: 1e9 })] }
+      const o = buildOutline(s)
+      expect(keyed(outlineCards(o)), `n=${n}`).toEqual(keyed(boardCards(s)))
+      expect(o.map((c) => c.projectId), `n=${n}`).toEqual(buildLiveShape(fromSidebar(s, 0)).projects.map((p) => p.id).sort((a, b) => (s.projects.findIndex((x) => x.id === a) - s.projects.findIndex((x) => x.id === b))))
+    }
+  })
+  it('follows the board when its cap is changed, and drops a limb that capping empties', () => {
+    const s = { ...state, threads: [t('a', 'p1', 's1', { updatedAt: 1 }), t('b', 'p1', 's2', { updatedAt: 9 })] }
+    const o = buildOutline(s, { maxCards: 1 })
+    expect(o[0].limbs.map((l) => l.sectionId)).toEqual(['s2'])
+    expect(keyed(outlineCards(o))).toEqual(keyed(boardCards(s, { maxCards: 1 })))
+  })
+  it('lets a selection of a capped-out thread fall away: its limb or creature is gone from the outline', () => {
+    const s = { ...state, threads: [...many(250), t('only', 'p3', 's2', { updatedAt: -1 })], projects: [...state.projects, { id: 'p3', name: 'Gamma' }] }
+    const o = buildOutline(s)
+    expect(o.find((c) => c.projectId === 'p3')).toBeUndefined()
+    expect(contextFor({ kind: 'limb', projectId: 'p3', sectionId: 's2' }, o)).toBeNull()
   })
 })
 
