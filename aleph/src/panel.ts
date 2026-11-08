@@ -1,8 +1,11 @@
-import { createElement, useEffect, useMemo, useRef } from "react";
+import { createElement, useEffect, useMemo, useReducer, useRef } from "react";
 import { experimental_useSidebarThreads } from "@get-bb/plugin-sdk/app";
 import foundry from "../../desktop/src/plugin";
 import { LiveApi, restFromApi } from "../../desktop/src/live";
 import { fromSidebar } from "./from-sidebar";
+import { FoundryPane } from "./pane";
+import { initialPaneState, paneReducer } from "./pane-state";
+import { buildOutline } from "./selection";
 
 // The pane is the unchanged Hermes one. It is mounted by running the Hermes plugin's own `register` against a small
 // context: `register` hands back the page's render function, and `rest` is served from the live thread list instead of
@@ -34,6 +37,8 @@ export const THEME_ALIASES: Record<string, string> = {
 };
 const THEMED: Record<string, string | number> = { ...FILL, ...THEME_ALIASES, background: "var(--background)", color: "var(--foreground)" };
 
+const ROW: Record<string, string | number> = { ...THEMED, flexDirection: "row" };
+
 export function FoundryPanel() {
   const sidebar = experimental_useSidebarThreads();
   const api = useRef<LiveApi | null>(null);
@@ -41,6 +46,13 @@ export function FoundryPanel() {
   const failed = sidebar.status === "error";
   const sidebarRef = useRef(sidebar);
   sidebarRef.current = sidebar;
+
+  // The pane's outline comes from the latest ready thread list; after a later failure it keeps the last one, like the board.
+  const lastReady = useRef<typeof sidebar | null>(null);
+  if (ready) lastReady.current = sidebar;
+  const outline = useMemo(() => (lastReady.current && lastReady.current.status === "ready" ? buildOutline(lastReady.current) : []), [ready, sidebar]);
+  const [pane, dispatch] = useReducer(paneReducer, initialPaneState);
+  useEffect(() => { dispatch({ type: "reconcile", outline }); }, [outline]);
 
   if (ready && !api.current) {
     api.current = new LiveApi();
@@ -77,10 +89,11 @@ export function FoundryPanel() {
     const message = failed ? "Couldn't load threads. Foundry will draw them when the thread list is available." : "Loading threads…";
     return createElement("div", { style: { ...THEMED, paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: `calc(${CHROME_TOP} + 16px)` } }, message);
   }
-  // The pane is laid out against this wrapper (position: relative), which sits below the chrome row.
+  // The board (left) and the Foundry pane (right, about a fifth of the width) sit side by side below the chrome row.
+  // The board is laid out against its wrapper (position: relative). The pane only reads: it never writes to bb.
   return createElement(
     "div",
-    { style: THEMED },
+    { style: ROW },
     createElement(
       "div",
       { style: { position: "relative", flex: "1 1 0%", minHeight: 0, minWidth: 0 } },
@@ -94,5 +107,6 @@ export function FoundryPanel() {
         )
       : null,
     ),
+    createElement(FoundryPane, { state: pane, dispatch, outline }),
   );
 }
