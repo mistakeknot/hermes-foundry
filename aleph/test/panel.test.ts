@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 
 const state = vi.hoisted(() => ({ sidebar: { status: 'loading' } as Record<string, unknown>, registers: 0, lastRest: null as unknown }))
-vi.mock('@get-bb/plugin-sdk/app', () => ({ experimental_useSidebarThreads: () => state.sidebar }))
+vi.mock('@get-bb/plugin-sdk/app', () => ({ experimental_useSidebarThreads: () => state.sidebar, useSdk: () => ({}) }))
 vi.mock('../../desktop/src/plugin', () => ({
   default: {
     register: (ctx: { rest: unknown; register: (c: { id: string; render: () => unknown }) => void }) => {

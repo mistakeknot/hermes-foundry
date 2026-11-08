@@ -7,7 +7,8 @@
 export interface Section {
   id: string
   name: string
-  /** Cards in this section, in the order they were moved in. A card is in at most one section of a creature. */
+  /** Cards in this section, in the order they were moved in. A card is in at most one section of a creature.
+   *  (The bb backend derives the order from each thread's last-touched time, so it is best-effort there: docs/sections-bb.md.) */
   cardIds: string[]
 }
 
@@ -15,7 +16,7 @@ export type SectionsErrorCode =
   | 'invalid_id' // creature id or card id is malformed (for a file backend: not a board slug)
   | 'invalid_name' // empty, too long, control characters, a lone surrogate, or the reserved name "Unsorted"
   | 'duplicate_name' // another section of this creature has the name (compared case-insensitively)
-  | 'not_found' // no such section, or (file backend, writes) the creature has no board directory
+  | 'not_found' // no such section, or (file backend, writes) the creature has no board directory, or (bb backend, moving a card INTO a section) no such thread in this creature
   | 'unsafe_path' // (file backend) the board directory or the sections file is a symlink or otherwise not what it must be; nothing is read or written through it
   | 'corrupt' // the stored data is not valid; a backend never overwrites it
 
