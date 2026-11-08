@@ -72,6 +72,7 @@ only; the Hermes build still leaves it external.
 - Split the host-specific part out of `src/plugin.ts` into a host-neutral core, once a changed Hermes bundle is allowed.
 - Show the pane's own loading and error states instead of the panel's placeholder.
 - Run it in a live Aleph and take a screenshot (not measured yet), including layout and fit in the nav panel.
-- Check that `experimental_useSidebarThreads` exists in the oldest Aleph that should be supported (the embedded SDK there
-  is older than the one this plugin builds against).
+- The plugin declares `bbPluginSdk >=0.6.100` because it imports only `definePluginApp` and `experimental_useSidebarThreads`,
+  which the built-in plugins of a 0.6.100 host already use. Found on a live host: the first declared floor (0.6.132, the
+  build-time SDK) made a 0.6.100 host mark the plugin incompatible. Not yet checked: anything older than 0.6.100.
 - Actions (open a thread from a card, start or stop work) are deliberately not built.
