@@ -5,7 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 
 const state = vi.hoisted(() => ({ sidebar: { status: 'loading' } as Record<string, unknown>, registers: 0, lastRest: null as unknown }))
-vi.mock('@get-bb/plugin-sdk/app', () => ({ experimental_useSidebarThreads: () => state.sidebar, useSdk: () => ({}) }))
+vi.mock('@get-bb/plugin-sdk/app', () => {
+  const sdk = { threadSections: { list: async () => [] } }
+  const rpc = { call: async () => ({}) }
+  return { experimental_useSidebarThreads: () => state.sidebar, useSdk: () => sdk, useRpc: () => rpc }
+})
 vi.mock('../../desktop/src/plugin', () => ({
   default: {
     register: (ctx: { rest: unknown; register: (c: { id: string; render: () => unknown }) => void }) => {
@@ -30,7 +34,7 @@ const ready = (title: string) => ({
 describe('FoundryPanel lifecycle', () => {
   let host: HTMLDivElement
   let root: Root
-  const paint = () => act(() => { root.render(createElement(FoundryPanel)) })
+  const paint = () => act(async () => { root.render(createElement(FoundryPanel)) })
 
   beforeEach(() => {
     state.sidebar = { status: 'loading' }
@@ -40,9 +44,9 @@ describe('FoundryPanel lifecycle', () => {
   })
   afterEach(() => { act(() => root.unmount()); vi.useRealTimers() })
 
-  it('lays the pane out below the host chrome row, in the flow, not against the window', () => {
+  it('lays the pane out below the host chrome row, in the flow, not against the window', async () => {
     state.sidebar = ready('First')
-    paint()
+    await paint()
     const outer = host.firstElementChild as HTMLElement
     expect(outer.style.paddingTop).toContain('--bb-app-chrome-row-height')
     expect(outer.style.position).not.toBe('absolute')
@@ -51,24 +55,24 @@ describe('FoundryPanel lifecycle', () => {
     expect((wrapper.firstElementChild as HTMLElement).style.position).toBe('absolute')
   })
 
-  it('aliases the pane\'s theme variables to bb\'s on the wrapper and uses bb colors for the stale banner', () => {
+  it('aliases the pane\'s theme variables to bb\'s on the wrapper and uses bb colors for the stale banner', async () => {
     state.sidebar = ready('First')
-    paint()
+    await paint()
     const outer = host.firstElementChild as HTMLElement
     for (const [k, v] of Object.entries(THEME_ALIASES)) expect(outer.style.getPropertyValue(k)).toBe(v)
     expect(THEME_ALIASES['--dt-background']).toBe('var(--background)')
     state.sidebar = { ...ready('First'), status: 'error' }
-    paint()
+    await paint()
     expect(host.innerHTML).not.toContain('rgba(0, 0, 0')
   })
 
   it('does not mount the pane when the thread list fails first, and mounts it live after recovery', async () => {
     state.sidebar = { status: 'error' }
-    paint()
+    await paint()
     expect(state.registers).toBe(0)
     expect(host.textContent).toContain("Couldn't load threads")
     state.sidebar = ready('First')
-    paint()
+    await paint()
     expect(state.registers).toBe(1)
     expect(host.textContent).toContain('PANE')
     const get = state.lastRest as (path: string) => Promise<{ projects: { cards: { title: string }[] }[] }>
@@ -76,49 +80,49 @@ describe('FoundryPanel lifecycle', () => {
     expect(snap.projects[0].cards[0].title).toBe('First')
   })
 
-  it('keeps the last board and says it may be out of date when the list fails later, then clears on recovery', () => {
+  it('keeps the last board and says it may be out of date when the list fails later, then clears on recovery', async () => {
     state.sidebar = ready('First')
-    paint()
+    await paint()
     state.sidebar = { status: 'error' }
-    paint()
+    await paint()
     expect(host.textContent).toContain('PANE')
     expect(host.textContent).toContain('Thread list unavailable')
     state.sidebar = ready('First')
-    paint()
+    await paint()
     expect(host.textContent).not.toContain('Thread list unavailable')
     expect(state.registers).toBe(1)
   })
 
-  it('puts the Foundry pane to the right of the board, in the same row, only once there is data', () => {
+  it('puts the Foundry pane to the right of the board, in the same row, only once there is data', async () => {
     state.sidebar = { status: 'loading' }
-    paint()
+    await paint()
     expect(host.querySelector('[data-foundry=pane]')).toBeNull()
     state.sidebar = ready('First')
-    paint()
+    await paint()
     const outer = host.firstElementChild as HTMLElement
     expect(outer.style.flexDirection).toBe('row')
     expect([...outer.children].map((c) => c.getAttribute('data-foundry'))).toEqual([null, 'pane'])
     expect((outer.lastElementChild as HTMLElement).style.width).toBe('22%')
   })
 
-  it('opens the drawer for a creature, and keeps the outline (and drawer) when the list fails later', () => {
+  it('opens the drawer for a creature, and keeps the outline (and drawer) when the list fails later', async () => {
     state.sidebar = ready('First')
-    paint()
+    await paint()
     const alpha = [...host.querySelectorAll<HTMLElement>('[data-foundry=creature]')].find((e) => e.textContent === 'Alpha')!
     act(() => { alpha.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(host.querySelector('[data-foundry=drawer]')).not.toBeNull()
     state.sidebar = { status: 'error' }
-    paint()
+    await paint()
     expect(host.querySelector('[data-foundry=drawer]')).not.toBeNull()
   })
 
-  it('closes the drawer when the selected creature leaves the thread list', () => {
+  it('closes the drawer when the selected creature leaves the thread list', async () => {
     state.sidebar = ready('First')
-    paint()
+    await paint()
     const alpha = [...host.querySelectorAll<HTMLElement>('[data-foundry=creature]')].find((e) => e.textContent === 'Alpha')!
     act(() => { alpha.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     state.sidebar = { ...ready('First'), projects: [{ id: 'p2', name: 'Beta' }], threads: [] }
-    paint()
+    await paint()
     expect(host.querySelector('[data-foundry=drawer]')).toBeNull()
   })
 
@@ -129,7 +133,7 @@ describe('FoundryPanel lifecycle', () => {
     const s = ready('Old') as ReturnType<typeof ready>
     s.threads[0].updatedAt = t0
     state.sidebar = s
-    paint()
+    await paint()
     const get = state.lastRest as (path: string) => Promise<{ projects: { cards: { status: string }[] }[] }>
     expect((await get('/snapshot')).projects[0].cards[0].status).toBe('open')
     vi.setSystemTime(t0 + 25 * 3600 * 1000)

@@ -1,5 +1,5 @@
-import { createElement, useEffect, useMemo, useReducer, useRef } from "react";
-import { experimental_useSidebarThreads, useSdk } from "@get-bb/plugin-sdk/app";
+import { createElement, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { experimental_useSidebarThreads, useSdk, useRpc } from "@get-bb/plugin-sdk/app";
 import foundry from "../../desktop/src/plugin";
 import { LiveApi, restFromApi } from "../../desktop/src/live";
 import { fromSidebar } from "./from-sidebar";
@@ -7,6 +7,12 @@ import { FoundryPane } from "./pane";
 import { initialPaneState, paneReducer } from "./pane-state";
 import { installBbSectionsCheck } from "./sections/bb-check-global";
 import { buildOutline } from "./selection";
+import { BbSectionsBackend } from './sections/bb-backend';
+import { InspectorEdits } from './inspector-edits';
+import { InspectorForm } from './inspector-form';
+import { InspectorLiveApi } from './inspector-live';
+import { RpcLineageStore, lineageContract } from './lineage/rpc';
+import type { InspectorProps } from './thread-port';
 
 // The pane is the unchanged Hermes one. It is mounted by running the Hermes plugin's own `register` against a small
 // context: `register` hands back the page's render function, and `rest` is served from the live thread list instead of
@@ -43,6 +49,10 @@ const ROW: Record<string, string | number> = { ...THEMED, flexDirection: "row" }
 export function FoundryPanel() {
   const sidebar = experimental_useSidebarThreads();
   const sdk = useSdk();
+  const rpc = useRpc<typeof lineageContract>();
+  const edits = useMemo(() => new InspectorEdits(new BbSectionsBackend(sdk), new RpcLineageStore(rpc)), [sdk, rpc]);
+  const revision = useSyncExternalStore(edits.subscribe, edits.version);
+  const [editError, setEditError] = useState('');
   // A dev entry point, not UI: lets the bb sections backend be exercised against the real SDK from the loaded plugin's console.
   useEffect(() => installBbSectionsCheck(sdk), [sdk]);
   const api = useRef<LiveApi | null>(null);
@@ -54,24 +64,33 @@ export function FoundryPanel() {
   // The pane's outline comes from the latest ready thread list; after a later failure it keeps the last one, like the board.
   const lastReady = useRef<typeof sidebar | null>(null);
   if (ready) lastReady.current = sidebar;
-  const outline = useMemo(() => (lastReady.current && lastReady.current.status === "ready" ? buildOutline(lastReady.current) : []), [ready, sidebar]);
+  const source = lastReady.current?.status === 'ready' ? lastReady.current : null;
+  const projected = useMemo(() => source ? edits.sidebar(source) : null, [source, edits, revision]);
+  const outline = useMemo(() => projected ? buildOutline(projected) : [], [projected]);
+  useEffect(() => {
+    if (!source) return;
+    let active = true;
+    void Promise.all(source.projects.map(p => edits.refresh(p.id))).then(() => { if (active) setEditError(''); }, () => { if (active) setEditError('Could not load inspector'); });
+    return () => { active = false; };
+  }, [source, edits]);
+  const Inspector = useMemo(() => (props: InspectorProps) => createElement(InspectorForm, { ...props, edits, threads: source?.threads ?? [] }), [edits, source]);
   const [pane, dispatch] = useReducer(paneReducer, initialPaneState);
   useEffect(() => { dispatch({ type: "reconcile", outline }); }, [outline]);
 
   if (ready && !api.current) {
-    api.current = new LiveApi();
-    api.current.update(fromSidebar(sidebar, Date.now()));
+    api.current = new InspectorLiveApi(edits);
+    api.current.update(fromSidebar(projected!, Date.now()));
   }
   useEffect(() => {
-    if (ready && api.current) api.current.update(fromSidebar(sidebar, Date.now()));
-  }, [ready, sidebar]);
+    if (projected && api.current) api.current.update(fromSidebar(projected, Date.now()));
+  }, [projected]);
   useEffect(() => {
     const timer = setInterval(() => {
       const current = sidebarRef.current;
-      if (current.status === "ready" && api.current) api.current.update(fromSidebar(current, Date.now()));
+      if (current.status === "ready" && api.current) api.current.update(fromSidebar(edits.sidebar(current), Date.now()));
     }, CLOCK_TICK_MS);
     return () => clearInterval(timer);
-  }, []);
+  }, [edits]);
 
   // Mount the pane only once there is live data. Mounting on a failure would make the unchanged pane pick its built-in
   // fixture data and keep it even after the thread list recovers, so a failure before the first data shows an error.
@@ -94,7 +113,7 @@ export function FoundryPanel() {
     return createElement("div", { style: { ...THEMED, paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: `calc(${CHROME_TOP} + 16px)` } }, message);
   }
   // The board (left) and the Foundry pane (right, about a fifth of the width) sit side by side below the chrome row.
-  // The board is laid out against its wrapper (position: relative). The pane only reads: it never writes to bb.
+  // The board is laid out against its wrapper (position: relative). Inspector writes use the shared edit service.
   return createElement(
     "div",
     { style: ROW },
@@ -111,6 +130,6 @@ export function FoundryPanel() {
         )
       : null,
     ),
-    createElement(FoundryPane, { state: pane, dispatch, outline }),
+    createElement(FoundryPane, { state: pane, dispatch, outline, Inspector: editError ? () => createElement('div', { role: 'alert' }, editError) : Inspector }),
   );
 }
