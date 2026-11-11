@@ -28,8 +28,8 @@ def select(source):
 
 
 if __name__ == '__main__':
-    with open(sys.argv[1]) as src:
+    with open(sys.argv[1], encoding='utf-8') as src:
         result = select(json.load(src))
-    with open(sys.argv[2], 'w') as out:
+    with open(sys.argv[2], 'w', encoding='utf-8') as out:
         json.dump(result, out, ensure_ascii=False, indent=2)
         out.write('\n')
