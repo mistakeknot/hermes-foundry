@@ -7,7 +7,11 @@ import { act } from 'react'
 const state = vi.hoisted(() => ({ sidebar: { status: 'loading' } as Record<string, unknown>, registers: 0, lastRest: null as unknown }))
 vi.mock('@get-bb/plugin-sdk/app', () => {
   const sdk = { threadSections: { list: async () => [] } }
-  const rpc = { call: async () => ({}) }
+  const values = new Map<string, object>()
+  const rpc = { call: async (method: string, args: { projectId: string; patch?: object }) => {
+    if (method === 'lineage.set') values.set(args.projectId, { ...values.get(args.projectId), ...args.patch })
+    return structuredClone(values.get(args.projectId) ?? {})
+  } }
   return { experimental_useSidebarThreads: () => state.sidebar, useSdk: () => sdk, useRpc: () => rpc }
 })
 vi.mock('../../desktop/src/plugin', () => ({
@@ -43,6 +47,39 @@ describe('FoundryPanel lifecycle', () => {
     root = createRoot(host)
   })
   afterEach(() => { act(() => root.unmount()); vi.useRealTimers() })
+
+  it('gives a fake thread caller shared edits, visible form history, and one-step undo', async () => {
+    state.sidebar = ready('First')
+    const Thread: import('../src/thread-port').ThreadComponent = (props) => createElement('div', null,
+      createElement('button', { 'data-test': 'call', onClick: () => void props.tools!.dispatch({ name: 'pick_lineage', arguments: { projectId: 'p1', name: 'Phoenix' } }) }, 'Pick'),
+      createElement('button', { 'data-test': 'undo', onClick: () => void props.tools!.dispatch({ name: 'undo_edit', arguments: { editId: props.history![0].id } }) }, 'Undo'),
+      ...(props.history ?? []).map(e => createElement('span', { key: e.id }, e.summary)))
+    await act(async () => root.render(createElement(FoundryPanel, { Thread })))
+    await act(async () => host.querySelector<HTMLElement>('[data-foundry=creature]')!.click())
+    await act(async () => host.querySelector<HTMLElement>('[data-test=call]')!.click())
+    expect(host.textContent).toContain('Lineage: Phoenix')
+    expect(host.querySelector<HTMLSelectElement>('select')!.value).toBe('Phoenix')
+    await act(async () => host.querySelector<HTMLElement>('[data-test=undo]')!.click())
+    expect(host.querySelector<HTMLSelectElement>('select')!.value).toBe('')
+    expect(host.textContent).toContain('Undid: Lineage: Phoenix')
+    await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(host.textContent).toContain('Name: Alpha; lineage: Seeded')
+  })
+
+  it('renders one form history entry and undoes a lineage edit from the thread', async () => {
+    state.sidebar = ready('First')
+    await paint()
+    await act(async () => host.querySelector<HTMLElement>('[data-foundry=creature]')!.click())
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Re-roll')!.click())
+    const entry = host.querySelector<HTMLElement>('[data-foundry=line-edit]')!
+    expect(entry.textContent).toContain('Lineage:')
+    expect(host.querySelectorAll('[data-foundry=line-edit]')).toHaveLength(1)
+    expect(host.querySelector<HTMLSelectElement>('select')!.value).not.toBe('')
+    await act(async () => entry.querySelector<HTMLButtonElement>('button')!.click())
+    expect(host.querySelector<HTMLSelectElement>('select')!.value).toBe('')
+    expect(host.textContent).toContain('Undid: Lineage:')
+    expect(entry.querySelector('button')).toBeNull()
+  })
 
   it('keeps the same inspector and its draft when a sidebar update replaces the source object', async () => {
     state.sidebar = ready('First')
