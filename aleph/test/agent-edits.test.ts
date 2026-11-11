@@ -104,3 +104,35 @@ it('undoes a move from Unsorted and retries undo after a duplicate name is resol
   expect(await agent.dispatch({ name: 'undo_edit', arguments: { editId: rename.editId } })).toMatchObject({ ok: true })
   expect(edits.project('p').sections[0].name).toBe('Docs')
 })
+it('rejects undo after a form renames away and back to the same section name', async () => {
+  const { edits, agent, a } = await setup()
+  const renamed = await agent.dispatch({ name: 'rename_section', arguments: { projectId: 'p', sectionId: a.id, name: 'Notes' } })
+  if (!renamed.ok) throw new Error('Rename failed')
+  await edits.saveSection('p', a.id, 'Later', [])
+  await edits.saveSection('p', a.id, 'Notes', [])
+  expect(await agent.dispatch({ name: 'undo_edit', arguments: { editId: renamed.editId } })).toMatchObject({ ok: false, error: { code: 'conflict' } })
+  expect(edits.project('p').sections[0].name).toBe('Notes')
+})
+it('rejects lineage undo after form changes away and back to the same selection', async () => {
+  const { edits, agent } = await setup()
+  const picked = await agent.dispatch({ name: 'pick_lineage', arguments: { projectId: 'p', name: 'Phoenix' } })
+  if (!picked.ok) throw new Error('Pick failed')
+  await edits.saveCreature('p', { lineage: {} })
+  await edits.saveCreature('p', { lineage: { name: 'Phoenix' } })
+  expect(await agent.dispatch({ name: 'undo_edit', arguments: { editId: picked.editId } })).toMatchObject({ ok: false, error: { code: 'conflict' } })
+  expect(edits.project('p').creature.lineage).toEqual({ name: 'Phoenix' })
+})
+for (const writer of ['form', 'move'] as const) it(`rejects membership undo after ${writer} moves away and back`, async () => {
+  const { edits, agent, a, b } = await setup()
+  const moved = await agent.dispatch({ name: 'move_thread', arguments: { projectId: 'p', threadId: 't', sectionId: a.id } })
+  if (!moved.ok) throw new Error('Move failed')
+  if (writer === 'form') {
+    await edits.saveSection('p', b.id, 'Plans', ['t'])
+    await edits.saveSection('p', a.id, 'Docs', ['t'])
+  } else {
+    await edits.moveCard('p', 't', b.id)
+    await edits.moveCard('p', 't', a.id)
+  }
+  expect(await agent.dispatch({ name: 'undo_edit', arguments: { editId: moved.editId } })).toMatchObject({ ok: false, error: { code: 'conflict' } })
+  expect(edits.project('p').sections[0].cardIds).toEqual(['t'])
+})

@@ -53,7 +53,10 @@ restores the previous committed field value using the same backend, rather
 than trying to invert the requested text. A lineage undo preserves later
 display-name changes; a section rename undo preserves membership. A move undo
 restores its previous section or Unsorted. Undo first reads the backend and
-refuses to overwrite a later change to that field. It records an “Undid”
+checks both its current value and a per-field revision. Any later write through
+the shared service supersedes an earlier undo for that field, even if it writes
+the same value or changes away and back. Form membership saves supersede undo
+for every included or removed thread. It records an “Undid”
 entry after success and consumes the original undo ID. A failed undo keeps
 its ID available for retry. Undo itself has no redo operation.
 

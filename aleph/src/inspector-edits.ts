@@ -21,14 +21,17 @@ export class InspectorEdits implements FoundryEdits {
   private listeners = new Set<() => void>()
   private revision = 0
   private entries: EditEntry[] = []
-  private inverses = new Map<number, { projectId: string; matches: () => boolean; restore: () => Promise<void> }>()
+  private inverses = new Map<number, { projectId: string; field: string; version: number; matches: () => boolean; restore: () => Promise<void> }>()
+  private fieldVersions = new Map<string, number>()
+  private field(projectId: string, kind: string, itemId = '') { return JSON.stringify([projectId, kind, itemId]) }
+  private touch(field: string) { this.fieldVersions.set(field, (this.fieldVersions.get(field) ?? 0) + 1) }
   private nextEdit = 1
   history = (): EditEntry[] => structuredClone(this.entries)
   private publish() { this.revision++; this.listeners.forEach(fn => fn()) }
-  private record(projectId: string, summary: string, inverse?: { matches: () => boolean; restore: () => Promise<void> }) {
+  private record(projectId: string, summary: string, inverse?: { field: string; matches: () => boolean; restore: () => Promise<void> }) {
     const id = this.nextEdit++
     this.entries.push({ id, projectId, summary, undoable: !!inverse })
-    if (inverse) this.inverses.set(id, { projectId, ...inverse })
+    if (inverse) this.inverses.set(id, { projectId, ...inverse, version: this.fieldVersions.get(inverse.field) ?? 0 })
     if (this.entries.length > 200) this.inverses.delete(this.entries.shift()!.id)
     this.publish()
   }
@@ -54,12 +57,16 @@ export class InspectorEdits implements FoundryEdits {
     saveCreature: async (id: string, patch: CreaturePreference) => {
       await this.read(id)
       const before = this.project(id).creature
-      await this.lineages.set(id, patch); await this.read(id)
+      await this.lineages.set(id, patch)
+      const field = this.field(id, 'lineage')
+      if (patch.lineage !== undefined) this.touch(field)
+      await this.read(id)
       const after = this.project(id).creature
       const lineageOnly = patch.name === undefined && patch.lineage !== undefined
       this.record(id, patch.name !== undefined ? `Name: ${after.name}; lineage: ${after.lineage?.name ?? 'Seeded'}` : `Lineage: ${after.lineage?.name ?? 'Seeded'}`, lineageOnly ? {
+        field,
         matches: () => JSON.stringify(this.project(id).creature.lineage) === JSON.stringify(after.lineage),
-        restore: async () => { await this.lineages.set(id, { lineage: before.lineage ?? {} }); await this.read(id) },
+        restore: async () => { await this.lineages.set(id, { lineage: before.lineage ?? {} }); this.touch(field); await this.read(id) },
       } : undefined)
     },
     reroll: async (id: string) => {
@@ -73,17 +80,22 @@ export class InspectorEdits implements FoundryEdits {
       await this.read(id)
       const before = this.project(id).sections.find(s => s.id === sectionId)
       if (!before) throw new SectionsError('not_found', 'No such section')
-      try { await this.sections.rename(id, sectionId, name) } finally { await this.read(id) }
+      const field = this.field(id, 'section-name', sectionId)
+      try { await this.sections.rename(id, sectionId, name); this.touch(field) } finally { await this.read(id) }
       const after = this.project(id).sections.find(s => s.id === sectionId)!
       this.record(id, `Section: ${after.name}`, {
+        field,
         matches: () => this.project(id).sections.find(s => s.id === sectionId)?.name === after.name,
-        restore: async () => { try { await this.sections.rename(id, sectionId, before.name) } finally { await this.read(id) } },
+        restore: async () => { try { await this.sections.rename(id, sectionId, before.name); this.touch(field) } finally { await this.read(id) } },
       })
     },
     saveSection: async (id: string, sectionId: string, name: string, members: readonly string[]) => {
       try {
         const current = await this.sections.rename(id, sectionId, name)
+        this.touch(this.field(id, 'section-name', sectionId))
         const wanted = new Set(members)
+        // A form save expresses membership decisions even when the values are unchanged.
+        for (const card of new Set([...current.cardIds, ...members])) this.touch(this.field(id, 'membership', card))
         for (const card of current.cardIds) if (!wanted.has(card)) await this.sections.moveCard(id, card, null)
         for (const card of wanted) if (!current.cardIds.includes(card)) await this.sections.moveCard(id, card, sectionId)
       } finally { await this.read(id) }
@@ -92,18 +104,20 @@ export class InspectorEdits implements FoundryEdits {
     moveCard: async (id: string, cardId: string, sectionId: string | null) => {
       await this.read(id)
       const source = this.project(id).sections.find(s => s.cardIds.includes(cardId))?.id ?? null
-      try { await this.sections.moveCard(id, cardId, sectionId) } finally { await this.read(id) }
+      const field = this.field(id, 'membership', cardId)
+      try { await this.sections.moveCard(id, cardId, sectionId); this.touch(field) } finally { await this.read(id) }
       const target = this.project(id).sections.find(s => s.id === sectionId)
       this.record(id, `Moved thread ${cardId} to ${target?.name ?? 'Unsorted'}`, {
+        field,
         matches: () => (this.project(id).sections.find(s => s.cardIds.includes(cardId))?.id ?? null) === sectionId,
-        restore: async () => { try { await this.sections.moveCard(id, cardId, source) } finally { await this.read(id) } },
+        restore: async () => { try { await this.sections.moveCard(id, cardId, source); this.touch(field) } finally { await this.read(id) } },
       })
     },
     undo: async (editId: number) => {
       const inverse = this.inverses.get(editId)
       if (!inverse) throw new SectionsError('not_found', 'No undoable edit')
       await this.read(inverse.projectId)
-      if (!inverse.matches()) throw Object.assign(new Error('This item changed after the edit'), { code: 'conflict' })
+      if (this.fieldVersions.get(inverse.field) !== inverse.version || !inverse.matches()) throw Object.assign(new Error('This item changed after the edit'), { code: 'conflict' })
       await inverse.restore()
       this.inverses.delete(editId)
       const entry = this.entries.find(e => e.id === editId)!
