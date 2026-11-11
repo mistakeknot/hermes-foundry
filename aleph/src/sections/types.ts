@@ -29,15 +29,29 @@ export class SectionsError extends Error {
   }
 }
 
+/** The host acknowledged the requested field, but a later backend read failed.
+ * This is not a rejected write. Membership is deliberately absent from a rename acknowledgement.
+ */
+export type SectionCommit =
+  | { kind: 'rename'; sectionId: string; name: string }
+  | { kind: 'move'; cardId: string; sectionId: string | null }
+export class SectionsCommittedError extends Error {
+  readonly committed = true
+  constructor(readonly mutation: SectionCommit) {
+    super('Section edit saved, but backend read-back failed')
+    this.name = 'SectionsCommittedError'
+  }
+}
+
 export interface SectionsBackend {
   /** The creature's sections in creation order. A creature with none (or one the backend has never seen) lists []. */
   list(creatureId: string): Promise<Section[]>
   /** Add a section; the name is trimmed. Rejects invalid_name / duplicate_name. */
   create(creatureId: string, name: string): Promise<Section>
-  /** Rename; renaming to the same name (or a different case of it) is allowed. Rejects not_found / invalid_name / duplicate_name. */
+  /** May throw SectionsCommittedError after acknowledgement. Rename; renaming to the same name (or a different case of it) is allowed. Rejects not_found / invalid_name / duplicate_name. */
   rename(creatureId: string, sectionId: string, name: string): Promise<Section>
   /** Delete a section. Its cards become Unsorted; no card is deleted. Rejects not_found. */
   remove(creatureId: string, sectionId: string): Promise<void>
-  /** Move a card into a section (appended), out of any other section; `null` moves it to Unsorted. Rejects not_found for an unknown section. */
+  /** May throw SectionsCommittedError after acknowledgement. Move a card into a section (appended), out of any other section; `null` moves it to Unsorted. Rejects not_found for an unknown section. */
   moveCard(creatureId: string, cardId: string, sectionId: string | null): Promise<void>
 }

@@ -1,6 +1,6 @@
 import { LINEAGES, pickLineage } from '../../desktop/src/creature'
 import type { CreaturePreference, LineageStore } from './lineage/store'
-import { SectionsError, type Section, type SectionsBackend } from './sections/types'
+import { SectionsCommittedError, SectionsError, type Section, type SectionsBackend } from './sections/types'
 import type { SidebarStateLike } from './from-sidebar'
 import { visibleName } from './sections/bb-backend'
 
@@ -22,20 +22,20 @@ export interface FoundryEdits {
   moveCard(projectId: string, cardId: string, sectionId: string | null): Promise<void>
 }
 
-/** Shared by forms and thread tools. Publish read-back state after every write, including partial backend failures. */
+/** Shared by forms and thread tools. Publish acknowledged writes and reconcile backend state, including partial failures. */
 export class InspectorEdits implements FoundryEdits {
   private values = new Map<string, ProjectEdits>()
   private listeners = new Set<() => void>()
   private revision = 0
   private entries: EditEntry[] = []
-  private inverses = new Map<number, { projectId: string; field: string; version: number; matches: () => boolean; restore: () => Promise<void> }>()
+  private inverses = new Map<number, { projectId: string; field: string; version: number; matches: () => boolean; restore: () => Promise<boolean | void> }>()
   private fieldVersions = new Map<string, number>()
   private field(projectId: string, kind: string, itemId = '') { return JSON.stringify([projectId, kind, itemId]) }
   private touch(field: string) { this.fieldVersions.set(field, (this.fieldVersions.get(field) ?? 0) + 1) }
   private nextEdit = 1
   history = (): EditEntry[] => structuredClone(this.entries)
   private publish() { this.revision++; this.listeners.forEach(fn => fn()) }
-  private record(projectId: string, summary: string, inverse?: { field: string; matches: () => boolean; restore: () => Promise<void> }) {
+  private record(projectId: string, summary: string, inverse?: { field: string; matches: () => boolean; restore: () => Promise<boolean | void> }) {
     const id = this.nextEdit++
     this.entries.push({ id, projectId, summary, undoable: !!inverse })
     if (inverse) this.inverses.set(id, { projectId, ...inverse, version: this.fieldVersions.get(inverse.field) ?? 0 })
@@ -74,10 +74,11 @@ export class InspectorEdits implements FoundryEdits {
   exclusive<T>(work: (writer: FoundryEdits & { renameSection: (id: string, sectionId: string, name: string) => Promise<void>; undo: (editId: number) => Promise<void> }) => Promise<T>) {
     return this.serial(() => work(this.direct))
   }
-  private async finish(projectId: string, summary: string, inverse?: Parameters<InspectorEdits['record']>[2]) {
+  private async finish(projectId: string, summary: string, inverse?: Parameters<InspectorEdits['record']>[2], backendRefreshFailed = false) {
     // A successful backend write is already committed. Preserve its history and inverse even if refresh fails.
     const editId = this.record(projectId, summary, inverse)
-    try { await this.read(projectId) } catch { throw new CommittedRefreshError(projectId, editId) }
+    try { await this.read(projectId) } catch { backendRefreshFailed = true }
+    if (backendRefreshFailed) throw new CommittedRefreshError(projectId, editId)
   }
   private async rejected(projectId: string, error: unknown): Promise<never> {
     // Best-effort reconciliation must not hide the write's original error code.
@@ -96,6 +97,28 @@ export class InspectorEdits implements FoundryEdits {
     this.values.set(id, { ...state, sections: state.sections.map(s => ({
       ...s, cardIds: [...s.cardIds.filter(c => c !== cardId), ...(s.id === sectionId ? [cardId] : [])],
     })) })
+  }
+  private async applyRename(id: string, sectionId: string, name: string) {
+    let section: Section, refreshFailed = false
+    try { section = await this.sections.rename(id, sectionId, name) } catch (error) {
+      if (!(error instanceof SectionsCommittedError) || error.mutation.kind !== 'rename' || error.mutation.sectionId !== sectionId) throw error
+      const before = this.project(id).sections.find(s => s.id === sectionId)
+      if (!before) throw error
+      // Only the name is acknowledged. Retain the last observed membership until refresh.
+      section = { ...before, name: error.mutation.name }
+      refreshFailed = true
+    }
+    this.setSection(id, section); this.touch(this.field(id, 'section-name', sectionId))
+    return { section, refreshFailed }
+  }
+  private async applyMove(id: string, cardId: string, sectionId: string | null) {
+    let refreshFailed = false
+    try { await this.sections.moveCard(id, cardId, sectionId) } catch (error) {
+      if (!(error instanceof SectionsCommittedError) || error.mutation.kind !== 'move' || error.mutation.cardId !== cardId || error.mutation.sectionId !== sectionId) throw error
+      refreshFailed = true
+    }
+    this.setMembership(id, cardId, sectionId); this.touch(this.field(id, 'membership', cardId))
+    return refreshFailed
   }
   private direct = {
     refresh: (id: string) => this.read(id),
@@ -128,62 +151,62 @@ export class InspectorEdits implements FoundryEdits {
       const before = this.project(id).sections.find(s => s.id === sectionId)
       if (!before) throw new SectionsError('not_found', 'No such section')
       const field = this.field(id, 'section-name', sectionId)
-      let after: Section
-      try { after = await this.sections.rename(id, sectionId, name) } catch (e) { return this.rejected(id, e) }
-      this.setSection(id, after); this.touch(field)
-      await this.finish(id, `Section: ${after.name}`, {
+      let renamed: Awaited<ReturnType<InspectorEdits['applyRename']>>
+      try { renamed = await this.applyRename(id, sectionId, name) } catch (e) { return this.rejected(id, e) }
+      await this.finish(id, `Section: ${renamed.section.name}`, {
         field,
-        matches: () => this.project(id).sections.find(s => s.id === sectionId)?.name === after.name,
+        matches: () => this.project(id).sections.find(s => s.id === sectionId)?.name === renamed.section.name,
         restore: async () => {
-          let restored: Section
-          try { restored = await this.sections.rename(id, sectionId, before.name) } catch (e) { return this.rejected(id, e) }
-          this.setSection(id, restored); this.touch(field)
+          try { return (await this.applyRename(id, sectionId, before.name)).refreshFailed } catch (e) { return this.rejected(id, e) }
         },
-      })
+      }, renamed.refreshFailed)
     },
     saveSection: async (id: string, sectionId: string, name: string, members: readonly string[]) => {
+      await this.read(id)
+      let committed = false, refreshFailed = false
       try {
-        const current = await this.sections.rename(id, sectionId, name)
-        this.setSection(id, current)
-        this.touch(this.field(id, 'section-name', sectionId))
-        const wanted = new Set(members)
+        const renamed = await this.applyRename(id, sectionId, name)
+        committed = true; refreshFailed = renamed.refreshFailed
+        const current = renamed.section, wanted = new Set(members)
         // A form save expresses membership decisions even when the values are unchanged.
         for (const card of new Set([...current.cardIds, ...members])) this.touch(this.field(id, 'membership', card))
         for (const card of current.cardIds) if (!wanted.has(card)) {
-          await this.sections.moveCard(id, card, null); this.setMembership(id, card, null)
+          refreshFailed = await this.applyMove(id, card, null) || refreshFailed
         }
         for (const card of wanted) if (!current.cardIds.includes(card)) {
-          await this.sections.moveCard(id, card, sectionId); this.setMembership(id, card, sectionId)
+          refreshFailed = await this.applyMove(id, card, sectionId) || refreshFailed
         }
-      } catch (e) { return this.rejected(id, e) }
-      await this.finish(id, `Section: ${this.project(id).sections.find(s => s.id === sectionId)!.name} (${members.length} members)`)
+      } catch (e) {
+        if (committed) this.record(id, `Section: ${this.project(id).sections.find(s => s.id === sectionId)!.name} (partly saved)`)
+        return this.rejected(id, e)
+      }
+      await this.finish(id, `Section: ${this.project(id).sections.find(s => s.id === sectionId)!.name} (${members.length} members)`, undefined, refreshFailed)
     },
     moveCard: async (id: string, cardId: string, sectionId: string | null) => {
       await this.read(id)
       const source = this.project(id).sections.find(s => s.cardIds.includes(cardId))?.id ?? null
       const field = this.field(id, 'membership', cardId)
-      try { await this.sections.moveCard(id, cardId, sectionId) } catch (e) { return this.rejected(id, e) }
-      this.setMembership(id, cardId, sectionId); this.touch(field)
+      let refreshFailed: boolean
+      try { refreshFailed = await this.applyMove(id, cardId, sectionId) } catch (e) { return this.rejected(id, e) }
       const target = this.project(id).sections.find(s => s.id === sectionId)
       await this.finish(id, `Moved thread ${cardId} to ${target?.name ?? 'Unsorted'}`, {
         field,
         matches: () => (this.project(id).sections.find(s => s.cardIds.includes(cardId))?.id ?? null) === sectionId,
         restore: async () => {
-          try { await this.sections.moveCard(id, cardId, source) } catch (e) { return this.rejected(id, e) }
-          this.setMembership(id, cardId, source); this.touch(field)
+          try { return await this.applyMove(id, cardId, source) } catch (e) { return this.rejected(id, e) }
         },
-      })
+      }, refreshFailed)
     },
     undo: async (editId: number) => {
       const inverse = this.inverses.get(editId)
       if (!inverse) throw new SectionsError('not_found', 'No undoable edit')
       await this.read(inverse.projectId)
       if (this.fieldVersions.get(inverse.field) !== inverse.version || !inverse.matches()) throw Object.assign(new Error('This item changed after the edit'), { code: 'conflict' })
-      await inverse.restore()
+      const refreshFailed = await inverse.restore()
       this.inverses.delete(editId)
       const entry = this.entries.find(e => e.id === editId)!
       entry.undoable = false
-      await this.finish(inverse.projectId, `Undid: ${entry.summary}`)
+      await this.finish(inverse.projectId, `Undid: ${entry.summary}`, undefined, !!refreshFailed)
     },
   }
   refresh(id: string) { return this.serial(() => this.direct.refresh(id)) }

@@ -42,19 +42,33 @@ The queue stays usable after any failed call.
 
 ## History and undo
 
-Successful writes enter one bounded, in-memory history in the shared edit
-service. Form saves and agent calls appear together as short thread entries;
-rejected writes add no success entry. As soon as a write commits, its returned
-value (or the acknowledged membership move) updates the shared state and its
-history and inverse are recorded, before refresh. A failed read-back returns
+Acknowledged single-field writes enter one bounded, in-memory history in the
+shared service. Form saves and agent calls appear together as short thread
+entries. A rejected single-field write adds no success entry. A form membership
+replacement can partly commit: if its rename or earlier moves succeeded before
+a later move is rejected, it adds a “partly saved” entry and reports the rejection.
+Those entries have no Undo button; reload and retry from the displayed state.
+
+The edit service accepts either a normal backend result or a typed
+`SectionsCommittedError` that identifies the acknowledged rename or move.
+The bb backend uses that error when its membership read fails after a rename
+acknowledgement; the name remains committed. The edit service updates the known
+field, advances its revision, and records history and an inverse before trying
+its own refresh. A rename acknowledgement does not confirm membership: until a
+successful refresh, membership comes from the last observed state. A move
+acknowledgement confirms only that thread's assignment. The returned `state`
+therefore combines last-observed and acknowledged values; it is not a
+cross-client atomic snapshot.
+
+If either backend or service post-write read-back fails, the dispatcher returns
 `ok: true, status: 'committed_refresh_failed'`, preserving the edit ID, summary,
-committed state and undo. Callers must not retry that write as if it were
-rejected; they can refresh or undo it. Normal success returns
-`status: 'committed'`. Forms receive `CommittedRefreshError` with the committed
-edit ID and show “Saved, but could not refresh inspector” while retaining the
-history entry. The service publishes committed state and
-history to React subscribers, so the picker, inspector and scene observe the
-same state. The scene redraws on its next snapshot poll.
+known field value and undo. This status also applies if a subsequent refresh in
+that call recovers. Callers must not retry the write as though it were rejected;
+they can refresh or undo it. Normal success returns `status: 'committed'`.
+Forms receive `CommittedRefreshError` with the committed edit ID and show
+“Saved, but could not refresh inspector” while retaining the history entry.
+History and known values publish to React subscribers; the scene observes them
+on its next snapshot poll.
 
 Every agent edit has an Undo button in the default thread surface. Undo
 restores the previous committed field value using the same backend, rather
@@ -63,11 +77,11 @@ display-name changes; a section rename undo preserves membership. A move undo
 restores its previous section or Unsorted. Undo first reads the backend and
 checks both its current value and a per-field revision. Any later write through
 the shared service supersedes an earlier undo for that field, even if it writes
-the same value or changes away and back. A refresh that observes a different
-lineage, section name or thread assignment also advances that field revision;
+the same value or changes away and back. A successful refresh that observes a
+different lineage, section name or thread assignment also advances that field revision;
 observing an external change away and back therefore still supersedes undo.
-Unchanged refreshes and changes to other fields preserve it. Form membership saves supersede undo
-for every included or removed thread. It records an “Undid”
+Unchanged refreshes and changes to other fields preserve it. Form membership
+saves supersede undo for every included or removed thread. It records an “Undid”
 entry after success and consumes the original undo ID. A rejected undo write keeps
 its ID available for retry. A committed undo consumes its original ID and records
 its entry before refresh too. If that refresh fails it returns `committed_refresh_failed`;
@@ -77,10 +91,13 @@ Design choice: keep the last 200 entries for this panel session. Closing the
 panel discards history and undo tokens. Full form saves (display name plus
 lineage, or section name plus membership) appear in history without an Undo
 button; lineage-only form changes use the same undo support as agent calls.
-The backend still has no cross-client compare-and-swap: the preflight read and
-a remote write can race. External changes that happen entirely between reads
-(including an unobserved away-and-back cycle) cannot be detected. Existing form membership replacements retain the
-partial-write limitation documented in `inspector-edits.md`.
+The backend still has no cross-client compare-and-swap: an external write can
+land between the final preflight read and the undo write. External changes that
+happen entirely between reads (including an unobserved away-and-back cycle)
+cannot be detected. A failure while awaiting a write acknowledgement also leaves
+the remote outcome unknown: refresh before retrying a `write_failed` call.
+Existing form membership replacements retain the partial-write limitation documented in `inspector-edits.md`.
 
-Tests use a fake thread component and real memory edit stores, without a
-provider, to check dispatch, validation, shared state, form history and undo.
+Tests use a fake thread component, memory stores, and the real bb sections
+backend over a fake SDK. They cover post-acknowledgement read failures, observed
+external changes, dispatch, validation, shared state, form history and undo.

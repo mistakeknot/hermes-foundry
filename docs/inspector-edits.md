@@ -28,8 +28,9 @@ await edits.moveCard(projectId, threadId, null) // Unsorted
 
 The validated thread operation set and undo hook are documented in [agent-edits.md](agent-edits.md).
 
-Thread tools should receive the panel's existing `edits` instance, use these
-methods, and record success only after the promise resolves. Calls are serialized.
+Thread tools receive the panel's existing `edits` instance through the validated
+dispatcher. The service records acknowledged writes, including writes whose
+later refresh fails; callers must not add a second success entry. Calls are serialized.
 `project(id)` returns a defensive copy of committed preferences and sections;
 `has(id)` distinguishes loaded state from defaults. `subscribe` and `version`
 support React's `useSyncExternalStore`. `sidebar(input)` projects committed names
