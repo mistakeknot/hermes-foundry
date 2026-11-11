@@ -63,7 +63,10 @@ display-name changes; a section rename undo preserves membership. A move undo
 restores its previous section or Unsorted. Undo first reads the backend and
 checks both its current value and a per-field revision. Any later write through
 the shared service supersedes an earlier undo for that field, even if it writes
-the same value or changes away and back. Form membership saves supersede undo
+the same value or changes away and back. A refresh that observes a different
+lineage, section name or thread assignment also advances that field revision;
+observing an external change away and back therefore still supersedes undo.
+Unchanged refreshes and changes to other fields preserve it. Form membership saves supersede undo
 for every included or removed thread. It records an “Undid”
 entry after success and consumes the original undo ID. A rejected undo write keeps
 its ID available for retry. A committed undo consumes its original ID and records
@@ -75,7 +78,8 @@ panel discards history and undo tokens. Full form saves (display name plus
 lineage, or section name plus membership) appear in history without an Undo
 button; lineage-only form changes use the same undo support as agent calls.
 The backend still has no cross-client compare-and-swap: the preflight read and
-a remote write can race. Existing form membership replacements retain the
+a remote write can race. External changes that happen entirely between reads
+(including an unobserved away-and-back cycle) cannot be detected. Existing form membership replacements retain the
 partial-write limitation documented in `inspector-edits.md`.
 
 Tests use a fake thread component and real memory edit stores, without a

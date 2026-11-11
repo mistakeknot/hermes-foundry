@@ -51,6 +51,20 @@ export class InspectorEdits implements FoundryEdits {
   project(id: string): ProjectEdits { return structuredClone(this.values.get(id) ?? { creature: {}, sections: [] }) }
   private async read(id: string) {
     const [creature, sections] = await Promise.all([this.lineages.get(id), this.sections.list(id)])
+    const previous = this.values.get(id)
+    if (previous) {
+      if (JSON.stringify(previous.creature.lineage) !== JSON.stringify(creature.lineage)) this.touch(this.field(id, 'lineage'))
+      const oldNames = new Map(previous.sections.map(s => [s.id, s.name]))
+      const newNames = new Map(sections.map(s => [s.id, s.name]))
+      for (const sectionId of new Set([...oldNames.keys(), ...newNames.keys()])) {
+        if (oldNames.get(sectionId) !== newNames.get(sectionId)) this.touch(this.field(id, 'section-name', sectionId))
+      }
+      const membership = (rows: Section[]) => new Map(rows.flatMap(s => s.cardIds.map(cardId => [cardId, s.id] as const)))
+      const oldMembers = membership(previous.sections), newMembers = membership(sections)
+      for (const cardId of new Set([...oldMembers.keys(), ...newMembers.keys()])) {
+        if (oldMembers.get(cardId) !== newMembers.get(cardId)) this.touch(this.field(id, 'membership', cardId))
+      }
+    }
     this.values.set(id, { creature, sections }); this.publish()
   }
   private serial<T>(fn: () => Promise<T>): Promise<T> {

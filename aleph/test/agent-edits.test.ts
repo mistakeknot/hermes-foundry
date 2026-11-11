@@ -7,10 +7,11 @@ import { MemoryLineageStore } from '../src/lineage/store'
 async function setup() {
   const sections = new MemorySectionsBackend()
   const a = await sections.create('p', 'Docs'), b = await sections.create('p', 'Plans')
-  const edits = new InspectorEdits(sections, new MemoryLineageStore())
+  const lineages = new MemoryLineageStore()
+  const edits = new InspectorEdits(sections, lineages)
   const agent = new AgentEdits(edits, () => ({ projects: [{ id: 'p' }], threads: [{ id: 't', projectId: 'p' }] }))
   await edits.refresh('p')
-  return { edits, agent, a, b }
+  return { edits, agent, sections, lineages, a, b }
 }
 it('advertises a small operation set and rejects extra fields, bad types and unknown ids without writes', async () => {
   const { edits, agent, a } = await setup()
@@ -192,4 +193,32 @@ it('distinguishes a rejected write from a committed edit and keeps the queue usa
   expect(edits.history()).toEqual([])
   expect(edits.project('p').sections[0].name).toBe('Docs')
   expect(await agent.dispatch({ name: 'rename_section', arguments: { projectId: 'p', sectionId: a.id, name: 'Notes' } })).toMatchObject({ ok: true, status: 'committed' })
+})
+
+for (const kind of ['name', 'lineage', 'membership'] as const) it(`invalidates undo after refresh observes external ${kind} changes away and back`, async () => {
+  const { edits, agent, sections, lineages, a, b } = await setup()
+  const result = await agent.dispatch(kind === 'name'
+    ? { name: 'rename_section', arguments: { projectId: 'p', sectionId: a.id, name: 'Notes' } }
+    : kind === 'lineage'
+      ? { name: 'pick_lineage', arguments: { projectId: 'p', name: 'Phoenix' } }
+      : { name: 'move_thread', arguments: { projectId: 'p', threadId: 't', sectionId: a.id } })
+  if (!result.ok) throw new Error('Edit failed')
+  for (const back of [false, true]) {
+    if (kind === 'name') await sections.rename('p', a.id, back ? 'Notes' : 'Later')
+    if (kind === 'lineage') await lineages.set('p', { lineage: back ? { name: 'Phoenix' } : {} })
+    if (kind === 'membership') await sections.moveCard('p', 't', back ? a.id : b.id)
+    await edits.refresh('p')
+  }
+  expect(await agent.dispatch({ name: 'undo_edit', arguments: { editId: result.editId } })).toMatchObject({ ok: false, error: { code: 'conflict' } })
+})
+it('keeps undo valid across unchanged refreshes and unrelated external changes', async () => {
+  const { edits, agent, sections, lineages, a, b } = await setup()
+  const result = await agent.dispatch({ name: 'rename_section', arguments: { projectId: 'p', sectionId: a.id, name: 'Notes' } })
+  if (!result.ok) throw new Error('Edit failed')
+  await edits.refresh('p')
+  await sections.rename('p', b.id, 'Other')
+  await lineages.set('p', { lineage: { name: 'Phoenix' } })
+  await sections.moveCard('p', 't', b.id)
+  await edits.refresh('p')
+  expect(await agent.dispatch({ name: 'undo_edit', arguments: { editId: result.editId } })).toMatchObject({ ok: true })
 })
