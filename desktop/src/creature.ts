@@ -5,9 +5,64 @@
 import { hashString, rng } from './rng'
 import type { Card, Project } from './types'
 import { knownStatus } from './status-look'
+import lineageData from '../data/jawnomicon-v50.json'
 
 export type V3 = [number, number, number]
 export type Material = 'stone' | 'lichen' | 'coral'
+
+export interface Lineage {
+  readonly id: string
+  readonly name: string
+  readonly motifs: readonly string[]
+  readonly eidogen: Readonly<Record<string, number | 'not-applicable'>>
+}
+export interface LineageSelection { name?: string; reroll?: number }
+export type CreatureProject = Project & { lineage?: LineageSelection | null }
+
+export const LINEAGES: readonly Lineage[] = Object.freeze((lineageData as Lineage[]).map(c =>
+  Object.freeze({ ...c, motifs: Object.freeze(c.motifs), eidogen: Object.freeze(c.eidogen) })))
+
+/** Persist a name/id or re-roll counter in the host's project preferences. No mutable global RNG. */
+export function pickLineage(projectId: string, selection: LineageSelection = {}, catalogue: readonly Lineage[] = LINEAGES): Lineage | undefined {
+  const ordered = [...catalogue].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  if (!ordered.length) return undefined
+  if (selection.name !== undefined) {
+    const name = selection.name.trim().toLowerCase()
+    return ordered.find(c => c.id.toLowerCase() === name || c.name.toLowerCase() === name)
+  }
+  const roll = Number.isSafeInteger(selection.reroll) ? selection.reroll! : 0
+  // Adjacent re-rolls always move to another creature, until the catalogue wraps.
+  const index = ((hashString(projectId) % ordered.length) + (roll % ordered.length) + ordered.length) % ordered.length
+  return ordered[index]
+}
+
+/** Design choice: motif families deform the existing abstract body; no extra limbs steal section ownership. */
+export function lineageTraits(c: Lineage): { stretch: V3; lift: number; reach: number; sway: number; lumps: number; material: Material } {
+  const motifs = c.motifs.join(' ')
+  const wing = /wing|firebird|eagle|avian|bird/.test(motifs)
+  const coil = /snake|serpent|worm|tentacle|octopus/.test(motifs)
+  const solid = /stone|clay|giant|dwarf/.test(motifs)
+  const crown = /horn|antler|many-head|multi.*head/.test(motifs)
+  const dim = (key: string) => {
+    const value = c.eidogen[key]
+    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.5
+  }
+  // The whole 29-dimension vector contributes to fullness; non-applicable is neutral.
+  const keys = Object.keys(c.eidogen).sort()
+  const fullness = keys.length ? keys.reduce((sum, k) => sum + dim(k), 0) / keys.length : 0.5
+  const warmth = (dim('Emotional Processing') + dim('Empathy') + dim('Nurturing')) / 3
+  return {
+    stretch: [0.8 + fullness * 0.4 + (wing ? 0.35 : 0),
+      0.75 + dim('Resilience') * 0.5 + (solid ? 0.2 : 0) - (coil ? 0.2 : 0),
+      Math.min(1.4, 0.8 + dim('Manifestation') * 0.4 + (coil ? 0.4 : 0))],
+    lift: wing ? 1.4 : coil ? 0.65 : 1,
+    // Keep large serpentine boards inside the existing narrow-pane camera envelope.
+    reach: Math.min(1.15, 0.8 + dim('Scope of Focus') * 0.4 + (coil ? 0.25 : 0)),
+    sway: 0.6 + dim('Adaptability') * 0.8 + (coil ? 0.4 : 0),
+    lumps: crown ? 8 : solid ? 4 : wing ? 6 : 5,
+    material: warmth < 0.45 ? 'stone' : warmth < 0.6 ? 'lichen' : 'coral',
+  }
+}
 
 export interface ScaleSpec { cardId: string; epicId: string | null; pos: V3; normal: V3; size: number }
 export interface CarvingSpec { docPath: string; title: string; cardId: string; pos: V3; normal: V3; glyph: number; size: number }
@@ -25,6 +80,7 @@ export interface CreatureSpec {
   projectId: string
   name: string
   seed: number
+  lineage?: { id: string; name: string }
   torso: { radii: V3; lumps: { pos: V3; r: number }[]; material: Material }
   limbs: LimbSpec[]
   height: number // top of the tallest limb, for camera framing
@@ -74,18 +130,22 @@ export function radiusAt(radii: number[], t: number): number {
   return radii[seg] * (1 - u) + radii[seg + 1] * u
 }
 
-export function buildCreature(project: Project): CreatureSpec {
+export function buildCreature(project: CreatureProject): CreatureSpec {
   const seed = hashString(project.id)
   const r = rng(seed)
+  const lineage = project.lineage === null ? undefined : pickLineage(project.id, project.lineage)
+  const traits = lineage && lineageTraits(lineage)
   const cards = [...project.cards].sort((a, b) => natCompare(a.id, b.id))
 
   const torsoR: V3 = [2.2 + r() * 0.9, 1.6 + r() * 0.8, 2.0 + r() * 0.9]
-  const lumps = Array.from({ length: 5 }, () => {
+  if (traits) for (let i = 0; i < 3; i++) torsoR[i] *= traits.stretch[i]
+  const lumps = Array.from({ length: traits?.lumps ?? 5 }, () => {
     const a = r() * Math.PI * 2
     const e = (r() - 0.3) * 1.2
     return { pos: r3([Math.cos(a) * torsoR[0] * 0.8, Math.sin(e) * torsoR[1] * 0.9, Math.sin(a) * torsoR[2] * 0.8] as V3), r: round(0.5 + r() * 0.7) }
   })
-  const torsoMat = MATERIALS[Math.floor(r() * 3)]
+  const randomMaterial = MATERIALS[Math.floor(r() * 3)]
+  const torsoMat = traits?.material ?? randomMaterial
 
   const byEpic = new Map<string | null, Card[]>()
   for (const e of project.epics) byEpic.set(e.id, [])
@@ -110,12 +170,12 @@ export function buildCreature(project: Project): CreatureSpec {
     const title = of > 1 ? `${name} (${part + 1}/${of})` : name
     const theta = (li / nLimb) * Math.PI * 2 + (lr() - 0.5) * 0.35
     const base: V3 = [Math.cos(theta) * torsoR[0] * 0.85, (lr() - 0.5) * torsoR[1] * 0.6, Math.sin(theta) * torsoR[2] * 0.85]
-    const length = Math.min(3 + 0.55 * Math.sqrt(list.length) * 2.2, 9)
-    const rise = 0.35 + lr() * 0.5
+    const length = Math.min(3 + 0.55 * Math.sqrt(list.length) * 2.2, 9) * (traits?.reach ?? 1)
+    const rise = (0.35 + lr() * 0.5) * (traits?.lift ?? 1)
     const N = 7
     const out: V3 = [Math.cos(theta), 0, Math.sin(theta)]
     const side: V3 = [-Math.sin(theta), 0, Math.cos(theta)]
-    const wob = 0.6 + lr() * 1.1
+    const wob = (0.6 + lr() * 1.1) * (traits?.sway ?? 1)
     const ph = lr() * 6.28
     const path: V3[] = []
     for (let k = 0; k <= N; k++) {
@@ -127,7 +187,8 @@ export function buildCreature(project: Project): CreatureSpec {
     }
     const baseR = Math.min(0.55 + 0.06 * Math.sqrt(list.length), 1.1)
     const radii = path.map((_, k) => round(baseR * (1 - 0.72 * (k / N)) + 0.05))
-    const material = MATERIALS[Math.floor(lr() * 3)]
+    const randomLimbMaterial = MATERIALS[Math.floor(lr() * 3)]
+    const material = traits?.material ?? randomLimbMaterial
 
     const counts = emptyCounts()
     const scales: ScaleSpec[] = list.map((c, i) => {
@@ -159,7 +220,7 @@ export function buildCreature(project: Project): CreatureSpec {
   let height = torsoR[1]
   let radius = Math.max(torsoR[0], torsoR[2])
   for (const l of limbs) for (const p of l.path) { height = Math.max(height, p[1]); radius = Math.max(radius, Math.hypot(p[0], p[2])) }
-  return { projectId: project.id, name: project.name, seed, torso: { radii: r3(torsoR), lumps, material: torsoMat }, limbs, height: round(height), radius: round(radius) }
+  return { projectId: project.id, name: project.name, seed, ...(lineage ? { lineage: { id: lineage.id, name: lineage.name } } : {}), torso: { radii: r3(torsoR), lumps, material: torsoMat }, limbs, height: round(height), radius: round(radius) }
 }
 
 /** Valley layout: creatures on a loose ring (or a line for one), deterministic from id order. */
