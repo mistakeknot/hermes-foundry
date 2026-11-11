@@ -73,7 +73,12 @@ export function FoundryPanel() {
     void Promise.all(source.projects.map(p => edits.refresh(p.id))).then(() => { if (active) setEditError(''); }, () => { if (active) setEditError('Could not load inspector'); });
     return () => { active = false; };
   }, [source, edits]);
-  const Inspector = useMemo(() => (props: InspectorProps) => createElement(InspectorForm, { ...props, edits, threads: source?.threads ?? [] }), [edits, source]);
+  const inspectorData = useRef({ source, editError });
+  inspectorData.current = { source, editError };
+  // The component type stays fixed while its data changes, preserving the selected item's draft.
+  const Inspector = useMemo(() => (props: InspectorProps) => createElement('div', null,
+    inspectorData.current.editError ? createElement('div', { role: 'alert' }, inspectorData.current.editError) : null,
+    createElement(InspectorForm, { ...props, edits, threads: inspectorData.current.source?.threads ?? [] })), [edits]);
   const [pane, dispatch] = useReducer(paneReducer, initialPaneState);
   useEffect(() => { dispatch({ type: "reconcile", outline }); }, [outline]);
 
@@ -130,6 +135,6 @@ export function FoundryPanel() {
         )
       : null,
     ),
-    createElement(FoundryPane, { state: pane, dispatch, outline, Inspector: editError ? () => createElement('div', { role: 'alert' }, editError) : Inspector }),
+    createElement(FoundryPane, { state: pane, dispatch, outline, Inspector }),
   );
 }

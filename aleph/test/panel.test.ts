@@ -44,6 +44,21 @@ describe('FoundryPanel lifecycle', () => {
   })
   afterEach(() => { act(() => root.unmount()); vi.useRealTimers() })
 
+  it('keeps the same inspector and its draft when a sidebar update replaces the source object', async () => {
+    state.sidebar = ready('First')
+    await paint()
+    await act(async () => host.querySelector<HTMLElement>('[data-foundry=creature]')!.click())
+    const input = host.querySelector<HTMLInputElement>('[data-foundry=drawer] input')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Draft Moss')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    state.sidebar = ready('Updated thread')
+    await paint()
+    expect(host.querySelector('[data-foundry=drawer] input')).toBe(input)
+    expect(input.value).toBe('Draft Moss')
+  })
+
   it('lays the pane out below the host chrome row, in the flow, not against the window', async () => {
     state.sidebar = ready('First')
     await paint()

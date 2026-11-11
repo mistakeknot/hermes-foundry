@@ -5,6 +5,12 @@ name and lineage; a limb edits its section name and members. Unsorted is compute
 and has no rename control. Successful form writes add one short line to the
 thread. Failed writes show an error and add no success line.
 
+Drafts belong to the selected project/section. Sidebar and backend refreshes
+update untouched fields while preserving edited name, lineage, and member
+fields, along with validation errors. Changing selection starts a new draft.
+A successful Save clears that item's dirty fields and adopts its committed
+values; Seeded and Re-roll reset only the lineage field, preserving a draft name.
+
 ## Shared write interface
 
 `aleph/src/inspector-edits.ts` exports `FoundryEdits`, implemented by
