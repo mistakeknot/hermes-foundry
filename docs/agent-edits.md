@@ -29,14 +29,14 @@ these operations combines a rename with a membership replacement.
 Results are a discriminated union:
 
 ```ts
-{ ok: true, editId: number, summary: string, state: ProjectEdits }
+{ ok: true, status: 'committed' | 'committed_refresh_failed', editId: number, summary: string, state: ProjectEdits }
 { ok: false, error: { code: string, message: string } }
 ```
 
 Section failures retain the forms' codes, including `duplicate_name`,
 `invalid_name`, `invalid_id`, `not_found`, `unsafe_path` and `corrupt`.
 Malformed operations and unknown lineages return `invalid_input`.
-Other backend failures return `write_failed`; internal exception details
+Rejected backend writes return `write_failed`; internal exception details
 are not exposed. Undo of a field that has since changed returns `conflict`.
 The queue stays usable after any failed call.
 
@@ -44,7 +44,15 @@ The queue stays usable after any failed call.
 
 Successful writes enter one bounded, in-memory history in the shared edit
 service. Form saves and agent calls appear together as short thread entries;
-failed calls add no success entry. The service publishes committed state and
+rejected writes add no success entry. As soon as a write commits, its returned
+value (or the acknowledged membership move) updates the shared state and its
+history and inverse are recorded, before refresh. A failed read-back returns
+`ok: true, status: 'committed_refresh_failed'`, preserving the edit ID, summary,
+committed state and undo. Callers must not retry that write as if it were
+rejected; they can refresh or undo it. Normal success returns
+`status: 'committed'`. Forms receive `CommittedRefreshError` with the committed
+edit ID and show “Saved, but could not refresh inspector” while retaining the
+history entry. The service publishes committed state and
 history to React subscribers, so the picker, inspector and scene observe the
 same state. The scene redraws on its next snapshot poll.
 
@@ -57,8 +65,10 @@ checks both its current value and a per-field revision. Any later write through
 the shared service supersedes an earlier undo for that field, even if it writes
 the same value or changes away and back. Form membership saves supersede undo
 for every included or removed thread. It records an “Undid”
-entry after success and consumes the original undo ID. A failed undo keeps
-its ID available for retry. Undo itself has no redo operation.
+entry after success and consumes the original undo ID. A rejected undo write keeps
+its ID available for retry. A committed undo consumes its original ID and records
+its entry before refresh too. If that refresh fails it returns `committed_refresh_failed`;
+retrying the consumed ID returns `not_found`. Undo itself has no redo operation.
 
 Design choice: keep the last 200 entries for this panel session. Closing the
 panel discards history and undo tokens. Full form saves (display name plus

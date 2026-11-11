@@ -136,3 +136,60 @@ for (const writer of ['form', 'move'] as const) it(`rejects membership undo afte
   expect(await agent.dispatch({ name: 'undo_edit', arguments: { editId: moved.editId } })).toMatchObject({ ok: false, error: { code: 'conflict' } })
   expect(edits.project('p').sections[0].cardIds).toEqual(['t'])
 })
+for (const kind of ['lineage', 'rename', 'move'] as const) it(`keeps a committed ${kind} edit visible and undoable when refresh fails`, async () => {
+  class FailingReadSections extends MemorySectionsBackend {
+    failRead = false
+    async list(id: string) {
+      if (this.failRead) { this.failRead = false; throw new Error('Refresh unavailable') }
+      return super.list(id)
+    }
+    async rename(id: string, sectionId: string, name: string) {
+      const result = await super.rename(id, sectionId, name)
+      if (kind === 'rename') this.failRead = true
+      return result
+    }
+    async moveCard(id: string, threadId: string, sectionId: string | null) {
+      await super.moveCard(id, threadId, sectionId)
+      if (kind === 'move') this.failRead = true
+    }
+  }
+  const sections = new FailingReadSections(), lineages = new MemoryLineageStore()
+  const section = await sections.create('p', 'Docs')
+  const originalSet = lineages.set.bind(lineages)
+  lineages.set = async (id, patch) => {
+    const result = await originalSet(id, patch)
+    if (kind === 'lineage') sections.failRead = true
+    return result
+  }
+  const edits = new InspectorEdits(sections, lineages)
+  const agent = new AgentEdits(edits, () => ({ projects: [{ id: 'p' }], threads: [{ id: 't', projectId: 'p' }] }))
+  const call = kind === 'lineage'
+    ? { name: 'pick_lineage', arguments: { projectId: 'p', name: 'Phoenix' } }
+    : kind === 'rename'
+      ? { name: 'rename_section', arguments: { projectId: 'p', sectionId: section.id, name: 'Notes' } }
+      : { name: 'move_thread', arguments: { projectId: 'p', threadId: 't', sectionId: section.id } }
+  const result = await agent.dispatch(call)
+  expect(result).toMatchObject({ ok: true, status: 'committed_refresh_failed' })
+  expect(edits.history()).toHaveLength(1)
+  expect(edits.history()[0].undoable).toBe(true)
+  if (!result.ok) throw new Error('Commit was not reported')
+  if (kind === 'lineage') expect(edits.project('p').creature.lineage).toEqual({ name: 'Phoenix' })
+  if (kind === 'rename') expect(edits.project('p').sections[0].name).toBe('Notes')
+  if (kind === 'move') expect(edits.project('p').sections[0].cardIds).toEqual(['t'])
+  // The inverse write also commits before its read-back fails: consume it once and record undo.
+  expect(await agent.dispatch({ name: 'undo_edit', arguments: { editId: result.editId } })).toMatchObject({ ok: true, status: 'committed_refresh_failed' })
+  expect(edits.history()).toHaveLength(2)
+  expect(edits.history()[0].undoable).toBe(false)
+  if (kind === 'lineage') expect(await lineages.get('p')).toEqual({ lineage: {} })
+  if (kind === 'rename') expect((await sections.list('p'))[0].name).toBe('Docs')
+  if (kind === 'move') expect((await sections.list('p'))[0].cardIds).toEqual([])
+  expect(await agent.dispatch({ name: 'undo_edit', arguments: { editId: result.editId } })).toMatchObject({ ok: false, error: { code: 'not_found' } })
+})
+it('distinguishes a rejected write from a committed edit and keeps the queue usable', async () => {
+  const { edits, agent, a } = await setup()
+  const rejected = await agent.dispatch({ name: 'rename_section', arguments: { projectId: 'p', sectionId: a.id, name: 'Plans' } })
+  expect(rejected).toMatchObject({ ok: false, error: { code: 'duplicate_name' } })
+  expect(edits.history()).toEqual([])
+  expect(edits.project('p').sections[0].name).toBe('Docs')
+  expect(await agent.dispatch({ name: 'rename_section', arguments: { projectId: 'p', sectionId: a.id, name: 'Notes' } })).toMatchObject({ ok: true, status: 'committed' })
+})

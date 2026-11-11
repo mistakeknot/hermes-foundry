@@ -26,6 +26,7 @@ export const PlaceholderThread: ThreadComponent = ({ context, lines, tools, hist
     try {
       const result = await tools.dispatch({ name: 'undo_edit', arguments: { editId } });
       if (!result.ok) setError(result.error.message);
+      else if (result.status === 'committed_refresh_failed') setError('Saved, but could not refresh inspector');
     } finally { setBusy(false); }
   };
   return createElement(

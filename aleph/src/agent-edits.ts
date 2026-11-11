@@ -1,4 +1,4 @@
-import { InspectorEdits, type EditEntry, type ProjectEdits } from './inspector-edits'
+import { CommittedRefreshError, InspectorEdits, type EditEntry, type ProjectEdits } from './inspector-edits'
 import { checkProject, preference } from './lineage/store'
 import { checkCardId, normalizeName } from './sections/model'
 import { SectionsError, type SectionsErrorCode } from './sections/types'
@@ -10,7 +10,7 @@ export type ToolCall =
   | { name: 'reroll_lineage'; arguments: { projectId: string } }
   | { name: 'undo_edit'; arguments: { editId: number } }
 export type EditResult =
-  | { ok: true; editId: number; summary: string; state: ProjectEdits }
+  | { ok: true; status: 'committed' | 'committed_refresh_failed'; editId: number; summary: string; state: ProjectEdits }
   | { ok: false; error: { code: SectionsErrorCode | 'invalid_input' | 'conflict' | 'write_failed'; message: string } }
 export interface AgentEditSurface {
   readonly operations: typeof operations
@@ -80,15 +80,21 @@ export class AgentEdits implements AgentEditSurface {
           if (target !== null && !this.edits.project(id).sections.some(s => s.id === target)) throw new SectionsError('not_found', 'No such section')
         }
         if (call.name === 'move_thread' && !scope.threads.some(t => t.id === call.arguments.threadId && t.projectId === id)) throw new SectionsError('not_found', 'No such thread in this project')
-        switch (call.name) {
-          case 'rename_section': await writer.renameSection(id, call.arguments.sectionId, call.arguments.name); break
-          case 'move_thread': await writer.moveCard(id, call.arguments.threadId, call.arguments.sectionId); break
-          case 'pick_lineage': await writer.saveCreature(id, { lineage: { name: call.arguments.name } }); break
-          case 'reroll_lineage': await writer.reroll(id); break
-          case 'undo_edit': await writer.undo(call.arguments.editId); break
+        let status: 'committed' | 'committed_refresh_failed' = 'committed'
+        try {
+          switch (call.name) {
+            case 'rename_section': await writer.renameSection(id, call.arguments.sectionId, call.arguments.name); break
+            case 'move_thread': await writer.moveCard(id, call.arguments.threadId, call.arguments.sectionId); break
+            case 'pick_lineage': await writer.saveCreature(id, { lineage: { name: call.arguments.name } }); break
+            case 'reroll_lineage': await writer.reroll(id); break
+            case 'undo_edit': await writer.undo(call.arguments.editId); break
+          }
+        } catch (error) {
+          if (!(error instanceof CommittedRefreshError)) throw error
+          status = 'committed_refresh_failed'
         }
         const entry = this.history().at(-1)!
-        return { ok: true as const, editId: entry.id, summary: entry.summary, state: this.edits.project(id) }
+        return { ok: true as const, status, editId: entry.id, summary: entry.summary, state: this.edits.project(id) }
       })
     } catch (error) {
       const code = (error as { code?: string } | null)?.code

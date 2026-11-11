@@ -4,6 +4,13 @@ import { SectionsError, type Section, type SectionsBackend } from './sections/ty
 import type { SidebarStateLike } from './from-sidebar'
 import { visibleName } from './sections/bb-backend'
 
+export class CommittedRefreshError extends Error {
+  constructor(readonly projectId: string, readonly editId: number) {
+    super('Saved, but could not refresh inspector')
+    this.name = 'CommittedRefreshError'
+  }
+}
+
 export interface EditEntry { id: number; projectId: string; summary: string; undoable: boolean }
 
 export interface ProjectEdits { creature: CreaturePreference; sections: Section[] }
@@ -34,6 +41,7 @@ export class InspectorEdits implements FoundryEdits {
     if (inverse) this.inverses.set(id, { projectId, ...inverse, version: this.fieldVersions.get(inverse.field) ?? 0 })
     if (this.entries.length > 200) this.inverses.delete(this.entries.shift()!.id)
     this.publish()
+    return id
   }
   private tail: Promise<unknown> = Promise.resolve()
   constructor(private sections: SectionsBackend, private lineages: LineageStore) {}
@@ -52,21 +60,46 @@ export class InspectorEdits implements FoundryEdits {
   exclusive<T>(work: (writer: FoundryEdits & { renameSection: (id: string, sectionId: string, name: string) => Promise<void>; undo: (editId: number) => Promise<void> }) => Promise<T>) {
     return this.serial(() => work(this.direct))
   }
+  private async finish(projectId: string, summary: string, inverse?: Parameters<InspectorEdits['record']>[2]) {
+    // A successful backend write is already committed. Preserve its history and inverse even if refresh fails.
+    const editId = this.record(projectId, summary, inverse)
+    try { await this.read(projectId) } catch { throw new CommittedRefreshError(projectId, editId) }
+  }
+  private async rejected(projectId: string, error: unknown): Promise<never> {
+    // Best-effort reconciliation must not hide the write's original error code.
+    await this.read(projectId).catch(() => undefined)
+    throw error
+  }
+  private setCreature(id: string, creature: CreaturePreference) {
+    this.values.set(id, { ...this.project(id), creature })
+  }
+  private setSection(id: string, section: Section) {
+    const state = this.project(id)
+    this.values.set(id, { ...state, sections: state.sections.some(s => s.id === section.id) ? state.sections.map(s => s.id === section.id ? section : s) : [...state.sections, section] })
+  }
+  private setMembership(id: string, cardId: string, sectionId: string | null) {
+    const state = this.project(id)
+    this.values.set(id, { ...state, sections: state.sections.map(s => ({
+      ...s, cardIds: [...s.cardIds.filter(c => c !== cardId), ...(s.id === sectionId ? [cardId] : [])],
+    })) })
+  }
   private direct = {
     refresh: (id: string) => this.read(id),
     saveCreature: async (id: string, patch: CreaturePreference) => {
       await this.read(id)
       const before = this.project(id).creature
-      await this.lineages.set(id, patch)
+      const after = await this.lineages.set(id, patch)
+      this.setCreature(id, after)
       const field = this.field(id, 'lineage')
       if (patch.lineage !== undefined) this.touch(field)
-      await this.read(id)
-      const after = this.project(id).creature
       const lineageOnly = patch.name === undefined && patch.lineage !== undefined
-      this.record(id, patch.name !== undefined ? `Name: ${after.name}; lineage: ${after.lineage?.name ?? 'Seeded'}` : `Lineage: ${after.lineage?.name ?? 'Seeded'}`, lineageOnly ? {
+      await this.finish(id, patch.name !== undefined ? `Name: ${after.name}; lineage: ${after.lineage?.name ?? 'Seeded'}` : `Lineage: ${after.lineage?.name ?? 'Seeded'}`, lineageOnly ? {
         field,
         matches: () => JSON.stringify(this.project(id).creature.lineage) === JSON.stringify(after.lineage),
-        restore: async () => { await this.lineages.set(id, { lineage: before.lineage ?? {} }); this.touch(field); await this.read(id) },
+        restore: async () => {
+          const restored = await this.lineages.set(id, { lineage: before.lineage ?? {} })
+          this.setCreature(id, restored); this.touch(field)
+        },
       } : undefined)
     },
     reroll: async (id: string) => {
@@ -81,36 +114,50 @@ export class InspectorEdits implements FoundryEdits {
       const before = this.project(id).sections.find(s => s.id === sectionId)
       if (!before) throw new SectionsError('not_found', 'No such section')
       const field = this.field(id, 'section-name', sectionId)
-      try { await this.sections.rename(id, sectionId, name); this.touch(field) } finally { await this.read(id) }
-      const after = this.project(id).sections.find(s => s.id === sectionId)!
-      this.record(id, `Section: ${after.name}`, {
+      let after: Section
+      try { after = await this.sections.rename(id, sectionId, name) } catch (e) { return this.rejected(id, e) }
+      this.setSection(id, after); this.touch(field)
+      await this.finish(id, `Section: ${after.name}`, {
         field,
         matches: () => this.project(id).sections.find(s => s.id === sectionId)?.name === after.name,
-        restore: async () => { try { await this.sections.rename(id, sectionId, before.name); this.touch(field) } finally { await this.read(id) } },
+        restore: async () => {
+          let restored: Section
+          try { restored = await this.sections.rename(id, sectionId, before.name) } catch (e) { return this.rejected(id, e) }
+          this.setSection(id, restored); this.touch(field)
+        },
       })
     },
     saveSection: async (id: string, sectionId: string, name: string, members: readonly string[]) => {
       try {
         const current = await this.sections.rename(id, sectionId, name)
+        this.setSection(id, current)
         this.touch(this.field(id, 'section-name', sectionId))
         const wanted = new Set(members)
         // A form save expresses membership decisions even when the values are unchanged.
         for (const card of new Set([...current.cardIds, ...members])) this.touch(this.field(id, 'membership', card))
-        for (const card of current.cardIds) if (!wanted.has(card)) await this.sections.moveCard(id, card, null)
-        for (const card of wanted) if (!current.cardIds.includes(card)) await this.sections.moveCard(id, card, sectionId)
-      } finally { await this.read(id) }
-      this.record(id, `Section: ${this.project(id).sections.find(s => s.id === sectionId)!.name} (${members.length} members)`)
+        for (const card of current.cardIds) if (!wanted.has(card)) {
+          await this.sections.moveCard(id, card, null); this.setMembership(id, card, null)
+        }
+        for (const card of wanted) if (!current.cardIds.includes(card)) {
+          await this.sections.moveCard(id, card, sectionId); this.setMembership(id, card, sectionId)
+        }
+      } catch (e) { return this.rejected(id, e) }
+      await this.finish(id, `Section: ${this.project(id).sections.find(s => s.id === sectionId)!.name} (${members.length} members)`)
     },
     moveCard: async (id: string, cardId: string, sectionId: string | null) => {
       await this.read(id)
       const source = this.project(id).sections.find(s => s.cardIds.includes(cardId))?.id ?? null
       const field = this.field(id, 'membership', cardId)
-      try { await this.sections.moveCard(id, cardId, sectionId); this.touch(field) } finally { await this.read(id) }
+      try { await this.sections.moveCard(id, cardId, sectionId) } catch (e) { return this.rejected(id, e) }
+      this.setMembership(id, cardId, sectionId); this.touch(field)
       const target = this.project(id).sections.find(s => s.id === sectionId)
-      this.record(id, `Moved thread ${cardId} to ${target?.name ?? 'Unsorted'}`, {
+      await this.finish(id, `Moved thread ${cardId} to ${target?.name ?? 'Unsorted'}`, {
         field,
         matches: () => (this.project(id).sections.find(s => s.cardIds.includes(cardId))?.id ?? null) === sectionId,
-        restore: async () => { try { await this.sections.moveCard(id, cardId, source); this.touch(field) } finally { await this.read(id) } },
+        restore: async () => {
+          try { await this.sections.moveCard(id, cardId, source) } catch (e) { return this.rejected(id, e) }
+          this.setMembership(id, cardId, source); this.touch(field)
+        },
       })
     },
     undo: async (editId: number) => {
@@ -122,7 +169,7 @@ export class InspectorEdits implements FoundryEdits {
       this.inverses.delete(editId)
       const entry = this.entries.find(e => e.id === editId)!
       entry.undoable = false
-      this.record(inverse.projectId, `Undid: ${entry.summary}`)
+      await this.finish(inverse.projectId, `Undid: ${entry.summary}`)
     },
   }
   refresh(id: string) { return this.serial(() => this.direct.refresh(id)) }
