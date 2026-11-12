@@ -3,7 +3,7 @@ import { FLOOR_Y, valleyHeight, valleySize, type Phases } from './terrain'
 import { resolveCssColor, luminance } from './themecolor'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { buildCreature, frameAt, layoutCreatures, type CreatureSpec, type LimbSpec, type Material, type V3 } from './creature'
+import { buildCreature, frameAt, layoutCreatures, type CreatureProject, type CreatureSpec, type LimbSpec, type Material, type V3 } from './creature'
 import { hashString, rng } from './rng'
 import { creaturePoints, fitCamera, LabelPlacer, setDepthRange } from './framing'
 import { claimedWithoutClimber } from './reducer'
@@ -1077,9 +1077,10 @@ export function moveCreature(v: Movable, to: THREE.Vector3) {
 }
 
 /** Cache key for a creature: changes whenever anything its cached spec, labels or bands show changes. */
-export function creatureKey(p: Project): string {
+export function creatureKey(p: CreatureProject): string {
   return JSON.stringify([
     p.name,
+    p.lineage,
     p.epics.map((e) => [e.id, e.title]),
     p.cards.map((c) => [c.id, c.title, c.epic_id, c.status, c.docs.map((d) => [d.path, d.title])]),
   ])
