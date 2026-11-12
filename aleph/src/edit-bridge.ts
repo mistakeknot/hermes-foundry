@@ -81,12 +81,15 @@ export class EditBridge {
 }
 
 /** What the model sees: the dispatcher's result without the full project state. */
-export function toolText(result: BridgeResult): { text: string; isError: boolean } {
+export function toolText(result: BridgeResult, name?: string): { text: string; isError: boolean } {
   if (!result.ok) {
     const e = (result.error ?? {}) as { code?: unknown; message?: unknown }
     const unknown = e.code === 'outcome_unknown'
     return { text: `${unknown ? 'Not confirmed' : 'Not done'} (${String(e.code ?? 'error')}): ${String(e.message ?? 'unknown error')}`, isError: true }
   }
   const note = result.status === 'committed_refresh_failed' ? ' (saved, but the pane could not refresh)' : ''
-  return { text: `Done: ${String(result.summary ?? 'edit applied')}${note}. Undo with edit id ${String(result.editId)}.`, isError: false }
+  const base = `Done: ${String(result.summary ?? 'edit applied')}${note}`
+  // An undo's own entry has no inverse, so offering its id would only lead to a not_found.
+  if (name === 'undo_edit') return { text: `${base}.`, isError: false }
+  return { text: `${base}. Undo with edit id ${String(result.editId)}.`, isError: false }
 }

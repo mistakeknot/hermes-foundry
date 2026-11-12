@@ -10,7 +10,7 @@
   },
   "bb": {
     "name": "Foundry",
-    "description": "A 3D board of your projects (boards) and threads (cards); working threads climb. Read-only.",
+    "description": "A 3D board of your projects (boards) and threads (cards); working threads climb. Chat and inspector make small edits with Undo.",
     "branding": {
       "icon": "Mountain"
     },

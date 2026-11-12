@@ -1,6 +1,6 @@
 # Foundry for Aleph (bb plugin)
 
-The same 3D board as the Hermes plugin, drawn from your bb projects and threads. **Read-only.**
+The same 3D board as the Hermes plugin, drawn from your bb projects and threads. The board is read-only; the pane's chat and inspector make small edits (rename a section, move a thread, pick or re-roll a look), each with Undo.
 
 | bb | Foundry |
 | --- | --- |
@@ -37,6 +37,26 @@ board. Tests with more than 240 threads, and a check that the outline and the bo
 
 The pane's command buttons (pause, reset and the like) answer with a read-only error: *"Foundry is read-only here: it shows
 threads but does not act on them yet."* Nothing is sent to any thread.
+
+## The Foundry chat
+
+The pane's thread area is bb's own chat for one Foundry thread, shown under the selection chip and the edit history. On first
+open the plugin tries to create a bb project named **Foundry** that points at an empty folder under the plugin's data
+directory, and to spawn one visible thread in it, marked `chat: true` so the `foundry_*` edit tools attach to it. The ids are
+saved in `chat.json` in that directory. Before creating anything it looks for a project named Foundry on that folder and a
+live thread titled Foundry in it, so a lost write or reply reuses what an earlier attempt made. If either is deleted or
+archived the next open makes a new one. Any other failure is shown in the pane; it can leave a project or thread already
+made (for example when saving their ids fails), and the next open finds and reuses it, but a thread made before the failure
+has already had its introductory turn. If the project holds more than 10,000 threads the search for an earlier Foundry thread
+is incomplete, so the pane reports an error instead of making another. This is checked
+within one plugin process only; two processes asking at the same moment could still each create one. The Foundry project and
+its thread are left out of the board and the picker once the plugin has looked the project up.
+
+Not verified against a live bb yet: that a plugin may create a project, that bb accepts an empty folder that is not a git
+repository, that a thread in it starts with the Foundry tools attached, and which provider, model and permission mode the
+thread gets. The folder is empty, but that does not limit the thread to the Foundry tools: bb's own tools and approval
+settings apply to it as to any thread. There is no manual fallback in the plugin; a project added by hand is only picked up
+if it is named Foundry and points at the plugin's `chat-workspace` folder.
 
 ## The Foundry pane (right-hand side)
 

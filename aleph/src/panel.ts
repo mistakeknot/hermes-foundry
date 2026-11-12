@@ -13,6 +13,9 @@ import { InspectorForm } from './inspector-form';
 import { InspectorLiveApi } from './inspector-live';
 import { RpcLineageStore, lineageContract } from './lineage/rpc';
 import { editContract } from './edit-bridge-rpc';
+import { chatContract } from './chat-rpc';
+import { excludeChat } from './chat-filter';
+import { chatThreadFor, type ChatState } from './chat-area';
 import { runBridgedCall } from './edit-bridge-panel';
 import { AgentEdits } from './agent-edits';
 import type { ThreadComponent } from './thread-port';
@@ -53,7 +56,7 @@ const ROW: Record<string, string | number> = { ...THEMED, flexDirection: "row" }
 export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ Thread }) => {
   const sidebar = experimental_useSidebarThreads();
   const sdk = useSdk();
-  const rpc = useRpc<typeof lineageContract & typeof editContract>();
+  const rpc = useRpc<typeof lineageContract & typeof editContract & typeof chatContract>();
   const edits = useMemo(() => new InspectorEdits(new BbSectionsBackend(sdk), new RpcLineageStore(rpc)), [sdk, rpc]);
   const revision = useSyncExternalStore(edits.subscribe, edits.version);
   const [editError, setEditError] = useState('');
@@ -64,14 +67,44 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   const failed = sidebar.status === "error";
   const sidebarRef = useRef(sidebar);
   sidebarRef.current = sidebar;
+  const chatProjectRef = useRef<string | null>(null);
 
   // The pane's outline comes from the latest ready thread list; after a later failure it keeps the last one, like the board.
   const lastReady = useRef<typeof sidebar | null>(null);
   if (ready) lastReady.current = sidebar;
-  const source = lastReady.current?.status === 'ready' ? lastReady.current : null;
+  const lastSource = lastReady.current?.status === 'ready' ? lastReady.current : null;
+  // The Foundry chat's own project and thread are not part of the user's work, so every consumer below sees the list without them.
+  const [chat, setChat] = useState<ChatState>({ status: 'loading' });
+  // The chat project's id comes from its own lookup, so the list is filtered even while the thread is still being made or
+  // could not be. The pane waits for that lookup (a local read); if it fails the list is shown unfiltered.
+  const [lookup, setLookup] = useState<{ done: boolean; projectId: string | null }>({ done: false, projectId: null });
+  const chatProjectId = chat.status === 'ready' ? chat.projectId : lookup.projectId;
+  chatProjectRef.current = chatProjectId;
+  const source = useMemo(() => lastSource && lookup.done ? excludeChat(lastSource, chatProjectId) : null, [lastSource, lookup.done, chatProjectId]);
   const scope = useRef(source);
   scope.current = source;
   const tools = useMemo(() => new AgentEdits(edits, () => scope.current ?? { projects: [], threads: [] }), [edits]);
+  useEffect(() => {
+    let active = true;
+    let latest = 0; // a reply to an older lookup must not overwrite a newer one
+    const look = () => {
+      const mine = ++latest;
+      return rpc.call('chat.project', {}).then(
+        r => { if (active && mine === latest) setLookup({ done: true, projectId: typeof r?.projectId === 'string' ? r.projectId : null }); },
+        () => { if (active && mine === latest) setLookup(l => ({ done: true, projectId: l.projectId })); });
+    };
+    void look();
+    rpc.call('chat.ensure', {}).then(
+      ids => { if (active) setChat(ids?.projectId && ids?.threadId ? { status: 'ready', projectId: ids.projectId, threadId: ids.threadId } : { status: 'error', message: 'unexpected reply' }); },
+      (e: unknown) => {
+        if (!active) return;
+        setChat({ status: 'error', message: e instanceof Error ? e.message : 'unknown error' });
+        // Ensure may have made the project before it failed, after the first lookup saw none: look again.
+        void look();
+      });
+    return () => { active = false; };
+  }, [rpc]);
+  const ChatThread = useMemo(() => chatThreadFor(chat), [chat]);
   const paneId = useRef(crypto.randomUUID());
   useRealtime('edit.call', payload => { void runBridgedCall(payload, tools, rpc, paneId.current); });
   const projected = useMemo(() => source ? edits.sidebar(source) : null, [source, edits, revision]);
@@ -91,9 +124,9 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   const [pane, dispatch] = useReducer(paneReducer, initialPaneState);
   useEffect(() => { dispatch({ type: "reconcile", outline }); }, [outline]);
 
-  if (ready && !api.current) {
+  if (ready && projected && !api.current) {
     api.current = new InspectorLiveApi(edits);
-    api.current.update(fromSidebar(projected!, Date.now()));
+    api.current.update(fromSidebar(projected, Date.now()));
   }
   useEffect(() => {
     if (projected && api.current) api.current.update(fromSidebar(projected, Date.now()));
@@ -101,7 +134,7 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   useEffect(() => {
     const timer = setInterval(() => {
       const current = sidebarRef.current;
-      if (current.status === "ready" && api.current) api.current.update(fromSidebar(edits.sidebar(current), Date.now()));
+      if (current.status === "ready" && api.current) api.current.update(fromSidebar(edits.sidebar(excludeChat(current, chatProjectRef.current)), Date.now()));
     }, CLOCK_TICK_MS);
     return () => clearInterval(timer);
   }, [edits]);
@@ -109,7 +142,7 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   // Mount the pane only once there is live data. Mounting on a failure would make the unchanged pane pick its built-in
   // fixture data and keep it even after the thread list recovers, so a failure before the first data shows an error.
   const page = useMemo(() => {
-    if (!ready && !api.current) return null;
+    if (!api.current) return null;
     let render: (() => unknown) | null = null;
     foundry.register({
       rest: restFromApi(() => api.current),
@@ -120,7 +153,7 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
     return render ? (render as () => unknown)() : null;
     // The pane reads its transport once when it mounts, so mount it once, after the first data.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready || api.current !== null]);
+  }, [api.current !== null]);
 
   if (!page) {
     const message = failed ? "Couldn't load threads. Foundry will draw them when the thread list is available." : "Loading threads…";
@@ -144,6 +177,6 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
         )
       : null,
     ),
-    createElement(FoundryPane, { state: pane, dispatch, outline, Inspector, Thread, tools, history: edits.history() }),
+    createElement(FoundryPane, { state: pane, dispatch, outline, Inspector, Thread: Thread ?? ChatThread, tools, history: edits.history() }),
   );
 }

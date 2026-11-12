@@ -4,16 +4,20 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 
-const state = vi.hoisted(() => ({ sidebar: { status: 'loading' } as Record<string, unknown>, registers: 0, lastRest: null as unknown, handlers: new Map<string, (p: unknown) => void>(), bridge: [] as [string, unknown][], values: new Map<string, object>() }))
+const state = vi.hoisted(() => ({ chat: 'ok' as 'ok' | 'fail', project: 'pc' as string | null | 'fail' | 'later' | 'stale', release: null as null | (() => void), projectCalls: 0, chatCalls: 0, sidebar: { status: 'loading' } as Record<string, unknown>, registers: 0, lastRest: null as unknown, handlers: new Map<string, (p: unknown) => void>(), bridge: [] as [string, unknown][], values: new Map<string, object>() }))
 vi.mock('@get-bb/plugin-sdk/app', () => {
   const sdk = { threadSections: { list: async () => [] } }
   const values = state.values
   const rpc = { call: async (method: string, args: { projectId: string; patch?: object }) => {
+    if (method === 'chat.project') { if (state.project === 'fail') throw new Error('lookup failed'); if (state.project === 'stale') { if (state.projectCalls++ === 0) return new Promise(res => { state.release = () => res({ projectId: null }) }); return { projectId: 'pc' } }
+      if (state.project === 'later') return { projectId: state.projectCalls++ === 0 ? null : 'pc' }; return { projectId: state.project } }
+    if (method === 'chat.ensure') { state.chatCalls++; if (state.chat === 'fail') throw new Error('bb said no'); return { projectId: 'pc', threadId: 'tc' } }
     if (method.startsWith('edit.')) { state.bridge.push([method, args]); return true }
     if (method === 'lineage.set') values.set(args.projectId, { ...values.get(args.projectId), ...args.patch })
     return structuredClone(values.get(args.projectId) ?? {})
   } }
-  return { experimental_useSidebarThreads: () => state.sidebar, useSdk: () => sdk, useRpc: () => rpc, useRealtime: (channel: string, h: (p: unknown) => void) => { state.handlers.set(channel, h) } }
+  const ThreadChat = (p: { threadId: string; variant?: string }) => createElement('div', { 'data-test': 'thread-chat', 'data-thread': p.threadId, 'data-variant': p.variant })
+  return { ThreadChat, experimental_useSidebarThreads: () => state.sidebar, useSdk: () => sdk, useRpc: () => rpc, useRealtime: (channel: string, h: (p: unknown) => void) => { state.handlers.set(channel, h) } }
 })
 vi.mock('../../desktop/src/plugin', () => ({
   default: {
@@ -43,6 +47,11 @@ describe('FoundryPanel lifecycle', () => {
 
   beforeEach(() => {
     state.sidebar = { status: 'loading' }
+    state.chat = 'ok'
+    state.project = 'pc'
+    state.projectCalls = 0
+    state.release = null
+    state.chatCalls = 0
     state.registers = 0
     state.bridge = []
     state.values.clear()
@@ -51,6 +60,75 @@ describe('FoundryPanel lifecycle', () => {
     root = createRoot(host)
   })
   afterEach(() => { act(() => root.unmount()); vi.useRealTimers() })
+
+  it('embeds bb\'s chat for the Foundry thread and keeps the Foundry project out of the board', async () => {
+    const sidebar = ready('First') as { projects: { id: string; name: string }[]; threads: Record<string, unknown>[] }
+    sidebar.projects.push({ id: 'pc', name: 'Foundry' })
+    sidebar.threads.push({ ...sidebar.threads[0], id: 'tc', projectId: 'pc', displayTitle: 'Foundry chat' })
+    state.sidebar = sidebar
+    await paint()
+    const chat = host.querySelector<HTMLElement>('[data-test=thread-chat]')!
+    expect(chat.dataset.thread).toBe('tc')
+    expect(chat.dataset.variant).toBe('compact')
+    expect(state.chatCalls).toBe(1)
+    expect(host.querySelectorAll('[data-foundry=creature]').length).toBe(1)
+  })
+
+  it('keeps the Foundry project out of the board even when the chat thread cannot be made', async () => {
+    const sidebar = ready('First') as { projects: { id: string; name: string }[]; threads: Record<string, unknown>[] }
+    sidebar.projects.push({ id: 'pc', name: 'Foundry' })
+    sidebar.threads.push({ ...sidebar.threads[0], id: 'tc', projectId: 'pc', displayTitle: 'Foundry chat' })
+    state.sidebar = sidebar
+    state.chat = 'fail'
+    await paint()
+    expect(host.querySelector('[data-foundry=chat-status]')!.textContent).toContain('bb said no')
+    expect(host.querySelectorAll('[data-foundry=creature]').length).toBe(1)
+  })
+
+  it('looks the chat project up again when ensure fails after the first lookup saw none', async () => {
+    const sidebar = ready('First') as { projects: { id: string; name: string }[]; threads: Record<string, unknown>[] }
+    sidebar.projects.push({ id: 'pc', name: 'Foundry' })
+    sidebar.threads.push({ ...sidebar.threads[0], id: 'tc', projectId: 'pc', displayTitle: 'Foundry chat' })
+    state.sidebar = sidebar
+    state.project = 'later'
+    state.chat = 'fail'
+    await paint()
+    expect(state.projectCalls).toBe(2)
+    expect(host.querySelectorAll('[data-foundry=creature]').length).toBe(1)
+  })
+
+  it('ignores a slow first lookup that answers after the recovery lookup', async () => {
+    const sidebar = ready('First') as { projects: { id: string; name: string }[]; threads: Record<string, unknown>[] }
+    sidebar.projects.push({ id: 'pc', name: 'Foundry' })
+    sidebar.threads.push({ ...sidebar.threads[0], id: 'tc', projectId: 'pc', displayTitle: 'Foundry chat' })
+    state.sidebar = sidebar
+    state.project = 'stale'
+    state.chat = 'fail'
+    await paint()
+    expect(state.projectCalls).toBe(2)
+    await act(async () => { state.release!() })
+    expect(host.querySelectorAll('[data-foundry=creature]').length).toBe(1)
+  })
+
+  it('shows the list unfiltered if the project lookup itself fails', async () => {
+    const sidebar = ready('First') as { projects: { id: string; name: string }[]; threads: Record<string, unknown>[] }
+    sidebar.projects.push({ id: 'pc', name: 'Foundry' })
+    sidebar.threads.push({ ...sidebar.threads[0], id: 'tc', projectId: 'pc', displayTitle: 'Foundry chat' })
+    state.sidebar = sidebar
+    state.project = 'fail'
+    state.chat = 'fail'
+    await paint()
+    expect(host.querySelectorAll('[data-foundry=creature]').length).toBe(2)
+  })
+
+  it('says so, and keeps the placeholder, when the Foundry chat cannot be opened', async () => {
+    state.sidebar = ready('First')
+    state.chat = 'fail'
+    await paint()
+    expect(host.querySelector('[data-test=thread-chat]')).toBeNull()
+    expect(host.querySelector('[data-foundry=chat-status]')!.textContent).toContain('bb said no')
+    expect(host.querySelector('[data-foundry=thread]')).not.toBeNull()
+  })
 
   it('gives a fake thread caller shared edits, visible form history, and one-step undo', async () => {
     state.sidebar = ready('First')
