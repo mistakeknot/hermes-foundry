@@ -101,3 +101,47 @@ Existing form membership replacements retain the partial-write limitation docume
 Tests use a fake thread component, memory stores, and the real bb sections
 backend over a fake SDK. They cover post-acknowledgement read failures, observed
 external changes, dispatch, validation, shared state, form history and undo.
+
+## Provider chat bridge
+
+A provider-backed chat thread reaches the dispatcher above through native bb
+tools, never through the browser directly. The dispatcher lives in the open
+Foundry pane, so the server half only relays calls to it.
+
+- Tools: one per operation, named `foundry_rename_section`, `foundry_move_thread`,
+  `foundry_pick_lineage`, `foundry_reroll_lineage` and `foundry_undo_edit`. Their
+  parameter schemas are the ones in `src/edit-operations.ts` (a module with no
+  imports, so the server bundle stays inside `aleph/`).
+- Gate: tools attach only to threads whose plugin metadata has `chat: true`.
+  Tools take effect at the next provider session start, so create the chat
+  thread after the plugin is installed.
+- Protocol: a tool call publishes `{callId, call}` on realtime channel
+  `edit.call`. Every open pane hears it; the first to call RPC `edit.claim` runs
+  it (so several windows never double-edit). That pane runs
+  `AgentEdits.dispatch` and calls `edit.report` with the result. The tool then
+  answers the model with "Done: <summary>. Undo with edit id N." or
+  "Not done (code): message".
+- Pane identity: each pane makes a random id and sends it with its claim and
+  report; only the claiming pane's report is accepted. The id is not a secret
+  from the pane's own client, and any client of the plugin can still call the
+  RPC, so the boundary is the same trusted-client one the realtime channel
+  already has.
+- Undo: each pane numbers its own edits from 1, so the model is given
+  bridge-wide edit ids instead. An undo is sent only to the pane that made the
+  edit (other panes ignore it and the server refuses their claim). If that
+  pane is closed the undo fails with `pane_unavailable`; an unknown id gives
+  `not_found`. Ids last for the server's run and the last 500 are kept.
+- Timeouts: 10 s for a claim, 30 s for a report. No claim gives
+  `pane_unavailable` ("Open the Foundry pane and try again"). A claim with no
+  report, or a cancel after the claim, gives `outcome_unknown` ("Not confirmed"):
+  the edit may have been applied, so check the pane before retrying. A cancel
+  before any claim gives `cancelled`; an already-aborted call is never
+  broadcast.
+- Limit: a pane must be open. With no pane, edits fail cleanly and nothing is
+  written. Edits made through the bridge are in the pane's history and can be
+  undone there like any agent call.
+
+Tests (`test/edit-bridge.test.ts`, `test/panel.test.ts`) cover the claim/report
+rules, timeouts, abort, RPC validation and the panel receiving a call through
+the real dispatcher. Not yet verified on a live bb: realtime delivery to the
+pane and tool attachment to a spawned thread.

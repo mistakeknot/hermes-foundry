@@ -1,5 +1,5 @@
 import { createElement, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type FunctionComponent } from "react";
-import { experimental_useSidebarThreads, useSdk, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_useSidebarThreads, useSdk, useRpc, useRealtime } from "@get-bb/plugin-sdk/app";
 import foundry from "../../desktop/src/plugin";
 import { LiveApi, restFromApi } from "../../desktop/src/live";
 import { fromSidebar } from "./from-sidebar";
@@ -12,6 +12,8 @@ import { InspectorEdits } from './inspector-edits';
 import { InspectorForm } from './inspector-form';
 import { InspectorLiveApi } from './inspector-live';
 import { RpcLineageStore, lineageContract } from './lineage/rpc';
+import { editContract } from './edit-bridge-rpc';
+import { runBridgedCall } from './edit-bridge-panel';
 import { AgentEdits } from './agent-edits';
 import type { ThreadComponent } from './thread-port';
 import type { InspectorProps } from './thread-port';
@@ -51,7 +53,7 @@ const ROW: Record<string, string | number> = { ...THEMED, flexDirection: "row" }
 export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ Thread }) => {
   const sidebar = experimental_useSidebarThreads();
   const sdk = useSdk();
-  const rpc = useRpc<typeof lineageContract>();
+  const rpc = useRpc<typeof lineageContract & typeof editContract>();
   const edits = useMemo(() => new InspectorEdits(new BbSectionsBackend(sdk), new RpcLineageStore(rpc)), [sdk, rpc]);
   const revision = useSyncExternalStore(edits.subscribe, edits.version);
   const [editError, setEditError] = useState('');
@@ -70,6 +72,8 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   const scope = useRef(source);
   scope.current = source;
   const tools = useMemo(() => new AgentEdits(edits, () => scope.current ?? { projects: [], threads: [] }), [edits]);
+  const paneId = useRef(crypto.randomUUID());
+  useRealtime('edit.call', payload => { void runBridgedCall(payload, tools, rpc, paneId.current); });
   const projected = useMemo(() => source ? edits.sidebar(source) : null, [source, edits, revision]);
   const outline = useMemo(() => projected ? buildOutline(projected) : [], [projected]);
   useEffect(() => {

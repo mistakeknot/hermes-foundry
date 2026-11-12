@@ -2,6 +2,9 @@ import { CommittedRefreshError, InspectorEdits, type EditEntry, type ProjectEdit
 import { checkProject, preference } from './lineage/store'
 import { checkCardId, normalizeName } from './sections/model'
 import { SectionsError, type SectionsErrorCode } from './sections/types'
+import { operations } from './edit-operations'
+
+export { operations }
 
 export type ToolCall =
   | { name: 'rename_section'; arguments: { projectId: string; sectionId: string; name: string } }
@@ -18,19 +21,6 @@ export interface AgentEditSurface {
   history(): EditEntry[]
 }
 interface Scope { projects: readonly { id: string }[]; threads: readonly { id: string; projectId: string }[] }
-const string = { type: 'string', minLength: 1 }
-const projectId = { ...string, pattern: '^[A-Za-z0-9_.-]{1,64}$' }
-function operation(name: ToolCall['name'], description: string, properties: Record<string, unknown>) {
-  return { name, description, parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } } as const
-}
-/** JSON Schema descriptions for callers; dispatch independently validates every raw call. */
-export const operations = [
-  operation('rename_section', 'Rename a section of a project.', { projectId, sectionId: string, name: { ...string, maxLength: 80 } }),
-  operation('move_thread', 'Move a thread to a section, or null for Unsorted.', { projectId, threadId: string, sectionId: { type: ['string', 'null'], minLength: 1 } }),
-  operation('pick_lineage', 'Choose a catalogue lineage by name.', { projectId, name: string }),
-  operation('reroll_lineage', 'Choose the next lineage.', { projectId }),
-  operation('undo_edit', 'Undo one recorded edit if its field has not changed.', { editId: { type: 'integer', minimum: 1 } }),
-] as const
 const invalid = (message: string): never => { throw Object.assign(new Error(message), { code: 'invalid_input' }) }
 function object(raw: unknown): Record<string, unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) invalid('Expected an object')
