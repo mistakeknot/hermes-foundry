@@ -85,7 +85,7 @@ export class FakeBb implements BbSectionsSdk {
       if (this.nameTaken(name, id)) throw new FakeBbHttpError(409, 'section_name_conflict', `a section named "${name}" already exists`)
       row.name = name
       row.updatedAt = this.tick()
-      // The live bb answers 0 on a rename: threads point at the section by id, so no thread row is rewritten.
+      // The live bb answered 0 on a rename with a thread in the section; the reason is not established.
       return { id, name, updatedThreadCount: 0 }
     },
     delete: async ({ id }): Promise<BbSectionMutation> => {

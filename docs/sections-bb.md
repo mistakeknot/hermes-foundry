@@ -13,7 +13,7 @@ Vocabulary is as in the other doc: creature = project, section = limb, card = th
 - **Unique by exact name.** Creating or renaming to a name that exists is HTTP 409 (`section_name_conflict`). The comparison
   is exact and case-sensitive.
 - A thread is in at most one section (`sectionId` on the thread). Moving it is `threads.update({threadId, sectionId})`;
-  `null` clears it. Rename returns `updatedThreadCount`, which the live bb reports as 0 even with a thread in the section (threads point at the section by id). Deleting a section clears its assignments and deletes no thread.
+  `null` clears it. Rename returns `updatedThreadCount`, which the live bb reported as 0 with a thread in the section (the thread stayed listed; why it counts 0 is not established). Deleting a section clears its assignments and deletes no thread.
 - The section list comes back ordered by name, with a creation time on each section.
 
 ## Scoping a section to a creature: the naming convention

@@ -143,8 +143,8 @@ export async function runBbSectionsCheck(sdk: BbSectionsSdk, opts: BbCheckOption
       () => `${picked.id} is in the section`,
       (s) => (sameList(s.find((x) => x.id === made.id)?.cardIds ?? [], [picked.id]) ? null : 'the thread is not listed in the section after the move'))
 
-    // Renamed while the thread is in it. The live bb answered updatedThreadCount 0 here (threads point at the section by id, so a
-    // rename rewrites no thread row), so the field only has to be present and a non-negative whole number.
+    // Renamed while the thread is in it. The live bb answered updatedThreadCount 0 here with the thread still listed in the section
+    // (why it counts 0 is not established), so the field only has to be present and a non-negative whole number.
     const renamedName = `${visible} renamed`
     await step('rename', async () => { lastRename = null; return backend.rename(creature, made.id, renamedName) },
       (s) => {
