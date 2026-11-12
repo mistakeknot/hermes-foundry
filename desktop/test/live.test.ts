@@ -128,7 +128,7 @@ describe('LiveApi', () => {
     expect((await api.snapshot()).projects.map((p) => p.id)).toEqual(['p1', 'p2'])
   })
 
-  it.each([1001, 1250, 2250])('retains the latest 1000 events after %i updates and replays from the base cursor', async (total) => {
+  it.each([1000, 1001, 1250, 2250])('retains the latest 1000 events after %i updates and replays from the base cursor', async (total) => {
     const api = mk()
     api.update(input([th('a')]))
     const base = total - 1000
@@ -159,6 +159,32 @@ describe('LiveApi', () => {
     })
     expect(await api.events(fresh.cursor, fresh.epoch)).toEqual({
       v: 1, epoch: fresh.epoch, cursor: fresh.cursor, events: [], resync: false,
+    })
+  })
+
+  it('advances the base past every dropped event when one update overflows by multiple events', async () => {
+    const api = mk()
+    api.update(input([th('a')]))
+    for (let seq = 1; seq <= 2; seq++) api.update(input([th('a', { title: `Revision ${seq}` })]))
+    const baseSnap = await api.snapshot()
+    expect(baseSnap.cursor).toBe('2')
+    for (let seq = 3; seq <= 1000; seq++) api.update(input([th('a', { title: `Revision ${seq}` })]))
+    // This update emits both card_upsert and worker_upsert, dropping sequences 1 and 2 together.
+    api.update(input([th('a', { title: 'Working', status: 'active' })]))
+    const fresh = await api.snapshot()
+    expect(fresh).toMatchObject({ epoch: baseSnap.epoch, cursor: '1002', last_seq: 1002 })
+    const replay = await api.events(baseSnap.cursor, baseSnap.epoch)
+    expect(replay.resync).toBe(false)
+    expect(replay.events.map((e) => e.seq)).toEqual(Array.from({ length: 1000 }, (_, i) => i + 3))
+    expect(replay.events.slice(-2).map((e) => e.type)).toEqual(['card_upsert', 'worker_upsert'])
+    const applied = applyReply(applySnapshot(baseSnap), replay)
+    expect(applied.resync).toBe(false)
+    expect(applied.state.watermark).toBe(1002)
+    expect(applied.state.cursor).toBe(fresh.cursor)
+    expect(applied.state.snap.projects).toEqual(fresh.projects)
+    expect(applied.state.snap.workers).toEqual(fresh.workers)
+    expect(await api.events('1', baseSnap.epoch)).toEqual({
+      v: 1, epoch: fresh.epoch, cursor: fresh.cursor, events: [], resync: true,
     })
   })
 
