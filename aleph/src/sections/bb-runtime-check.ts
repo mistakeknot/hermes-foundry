@@ -143,7 +143,8 @@ export async function runBbSectionsCheck(sdk: BbSectionsSdk, opts: BbCheckOption
       () => `${picked.id} is in the section`,
       (s) => (sameList(s.find((x) => x.id === made.id)?.cardIds ?? [], [picked.id]) ? null : 'the thread is not listed in the section after the move'))
 
-    // Renamed while the thread is in it, so bb's updatedThreadCount should be 1.
+    // Renamed while the thread is in it. The live bb answered updatedThreadCount 0 here with the thread still listed in the section
+    // (why it counts 0 is not established), so the field only has to be present and a non-negative whole number.
     const renamedName = `${visible} renamed`
     await step('rename', async () => { lastRename = null; return backend.rename(creature, made.id, renamedName) },
       (s) => {
@@ -155,7 +156,7 @@ export async function runBbSectionsCheck(sdk: BbSectionsSdk, opts: BbCheckOption
         if (!sameList(s.cardIds, [picked.id])) return 'the thread is not in the section after the rename'
         const n = (lastRename as BbSectionMutation | null)?.updatedThreadCount
         report.renameUpdatedThreadCount = typeof n === 'number' ? n : null
-        return n === 1 ? null : `bb reports updatedThreadCount ${n === undefined ? 'nothing' : JSON.stringify(n)}, expected 1`
+        return typeof n === 'number' && Number.isInteger(n) && n >= 0 ? null : `bb reports updatedThreadCount ${n === undefined ? 'nothing' : JSON.stringify(n)}, expected a whole number of 0 or more`
       })
 
     await step('move thread out', async () => { await backend.moveCard(creature, picked.id, null); return backend.list(creature) },

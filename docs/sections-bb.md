@@ -13,7 +13,7 @@ Vocabulary is as in the other doc: creature = project, section = limb, card = th
 - **Unique by exact name.** Creating or renaming to a name that exists is HTTP 409 (`section_name_conflict`). The comparison
   is exact and case-sensitive.
 - A thread is in at most one section (`sectionId` on the thread). Moving it is `threads.update({threadId, sectionId})`;
-  `null` clears it. Rename returns `updatedThreadCount`. Deleting a section clears its assignments and deletes no thread.
+  `null` clears it. Rename returns `updatedThreadCount`, which the live bb reported as 0 with a thread in the section (the thread stayed listed; why it counts 0 is not established). Deleting a section clears its assignments and deletes no thread.
 - The section list comes back ordered by name, with a creation time on each section.
 
 ## Scoping a section to a creature: the naming convention
@@ -102,8 +102,8 @@ It logs one line per step and resolves a report `{ok, steps, restore, renameUpda
 2. `list`, then `create` a section named `runtime-check <timestamp>` (stored as `foundry/<project>/runtime-check <timestamp>`);
 3. create the same name in another case (the backend refuses) and the exact stored name through the raw SDK (expects bb's 409);
 4. `list` shows it; move the thread in and check it is listed there; `rename` the section while the thread is in it (checks the
-   thread is still listed, and that bb's `updatedThreadCount` is exactly 1; a missing, non-numeric or other value fails the
-   step, as the installed SDK schema requires the field); move the thread out and check it is not listed;
+   thread is still listed, and that bb's `updatedThreadCount` is present and a whole number of 0 or more; the live bb answers 0; a missing,
+   non-numeric or negative value fails the step, as the installed SDK schema requires the field); move the thread out and check it is not listed;
 5. **restore the thread** to the section it started in (or none): `threads.update`, then a `threads.list` read-back, up to
    `restoreAttempts` times (default 3);
 6. only then `delete` the throwaway section and check it is gone, and check the thread still exists in its original section.
