@@ -1,4 +1,4 @@
-import { LINEAGES, type LineageSelection } from '../../../desktop/src/creature'
+import { LINEAGE_NAMES, type LineageSelection } from './catalogue'
 
 export interface CreaturePreference { name?: string; lineage?: LineageSelection }
 export interface LineageStore {
@@ -25,7 +25,7 @@ export function preference(raw: unknown): CreaturePreference {
     out.lineage = {}
     if (l.name !== undefined) {
       if (typeof l.name !== 'string') throw new Error('Invalid lineage')
-      const entry = LINEAGES.find(x => x.id === l.name || x.name.toLowerCase() === l.name!.trim().toLowerCase())
+      const entry = LINEAGE_NAMES.find(x => x.id === l.name || x.name.toLowerCase() === l.name!.trim().toLowerCase())
       if (!entry) throw new Error('Unknown lineage')
       out.lineage.name = entry.name
     }
