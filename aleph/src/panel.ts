@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { createElement, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type FunctionComponent } from "react";
 import { experimental_useSidebarThreads, useSdk, useRpc } from "@get-bb/plugin-sdk/app";
 import foundry from "../../desktop/src/plugin";
 import { LiveApi, restFromApi } from "../../desktop/src/live";
@@ -12,6 +12,8 @@ import { InspectorEdits } from './inspector-edits';
 import { InspectorForm } from './inspector-form';
 import { InspectorLiveApi } from './inspector-live';
 import { RpcLineageStore, lineageContract } from './lineage/rpc';
+import { AgentEdits } from './agent-edits';
+import type { ThreadComponent } from './thread-port';
 import type { InspectorProps } from './thread-port';
 
 // The pane is the unchanged Hermes one. It is mounted by running the Hermes plugin's own `register` against a small
@@ -46,7 +48,7 @@ const THEMED: Record<string, string | number> = { ...FILL, ...THEME_ALIASES, bac
 
 const ROW: Record<string, string | number> = { ...THEMED, flexDirection: "row" };
 
-export function FoundryPanel() {
+export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ Thread }) => {
   const sidebar = experimental_useSidebarThreads();
   const sdk = useSdk();
   const rpc = useRpc<typeof lineageContract>();
@@ -65,6 +67,9 @@ export function FoundryPanel() {
   const lastReady = useRef<typeof sidebar | null>(null);
   if (ready) lastReady.current = sidebar;
   const source = lastReady.current?.status === 'ready' ? lastReady.current : null;
+  const scope = useRef(source);
+  scope.current = source;
+  const tools = useMemo(() => new AgentEdits(edits, () => scope.current ?? { projects: [], threads: [] }), [edits]);
   const projected = useMemo(() => source ? edits.sidebar(source) : null, [source, edits, revision]);
   const outline = useMemo(() => projected ? buildOutline(projected) : [], [projected]);
   useEffect(() => {
@@ -78,7 +83,7 @@ export function FoundryPanel() {
   // The component type stays fixed while its data changes, preserving the selected item's draft.
   const Inspector = useMemo(() => (props: InspectorProps) => createElement('div', null,
     inspectorData.current.editError ? createElement('div', { role: 'alert' }, inspectorData.current.editError) : null,
-    createElement(InspectorForm, { ...props, edits, threads: inspectorData.current.source?.threads ?? [] })), [edits]);
+    createElement(InspectorForm, { ...props, onEdit: () => {}, edits, threads: inspectorData.current.source?.threads ?? [] })), [edits]);
   const [pane, dispatch] = useReducer(paneReducer, initialPaneState);
   useEffect(() => { dispatch({ type: "reconcile", outline }); }, [outline]);
 
@@ -135,6 +140,6 @@ export function FoundryPanel() {
         )
       : null,
     ),
-    createElement(FoundryPane, { state: pane, dispatch, outline, Inspector }),
+    createElement(FoundryPane, { state: pane, dispatch, outline, Inspector, Thread, tools, history: edits.history() }),
   );
 }

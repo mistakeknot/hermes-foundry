@@ -8,6 +8,6 @@ export default definePluginApp((app) => {
     title: "Foundry",
     icon: "Mountain",
     path: "foundry",
-    component: FoundryPanel,
+    component: () => <FoundryPanel />,
   });
 });

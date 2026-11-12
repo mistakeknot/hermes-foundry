@@ -1,5 +1,5 @@
 import { checkCardId, normalizeName } from './model'
-import { SectionsError, type Section, type SectionsBackend } from './types'
+import { SectionsCommittedError, SectionsError, type Section, type SectionsBackend } from './types'
 
 // The bb backend: Foundry sections over bb's own thread sections.
 //
@@ -169,7 +169,13 @@ export class BbSectionsBackend implements SectionsBackend {
         if (isNotFound(e)) throw new SectionsError('not_found', `no such section: ${sectionId}`)
         throw e
       }
-      return { id: current.id, name, cardIds: await this.cardsIn(creature, current.id) }
+      try {
+        return { id: current.id, name, cardIds: await this.cardsIn(creature, current.id) }
+      } catch {
+        // Preserve the acknowledgement across the subsequent membership read.
+        // The name is confirmed even for an accepted no-op rename.
+        throw new SectionsCommittedError({ kind: 'rename', sectionId: current.id, name })
+      }
     })
   }
 

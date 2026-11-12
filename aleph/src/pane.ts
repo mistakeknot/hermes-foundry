@@ -1,3 +1,5 @@
+import type { AgentEditSurface } from './agent-edits';
+import type { EditEntry } from './inspector-edits';
 import { createElement, type Dispatch } from "react";
 import { paneLayout } from "./layout";
 import type { PaneAction, PaneState } from "./pane-state";
@@ -9,6 +11,8 @@ export interface FoundryPaneProps {
   dispatch: Dispatch<PaneAction>;
   outline: readonly OutlineCreature[];
   Thread?: ThreadComponent;
+  tools?: AgentEditSurface;
+  history?: readonly EditEntry[];
   Inspector?: InspectorComponent;
 }
 
@@ -36,7 +40,7 @@ function Picker({ state, dispatch, outline }: Pick<FoundryPaneProps, "state" | "
   );
 }
 
-export function FoundryPane({ state, dispatch, outline, Thread = PlaceholderThread, Inspector = PlaceholderInspector }: FoundryPaneProps) {
+export function FoundryPane({ state, dispatch, outline, tools, history, Thread = PlaceholderThread, Inspector = PlaceholderInspector }: FoundryPaneProps) {
   const layout = paneLayout(state.selection);
   const context = contextFor(state.selection, outline);
   return createElement(
@@ -46,7 +50,7 @@ export function FoundryPane({ state, dispatch, outline, Thread = PlaceholderThre
       style: { display: "flex", flexDirection: "column", flex: "0 0 auto", width: layout.width, minWidth: layout.minWidth, maxWidth: layout.maxWidth, minHeight: 0, boxSizing: "border-box", borderLeft: LINE, background: "var(--background)", color: "var(--foreground)", fontFamily: "var(--font-sans)" },
     },
     createElement(Picker, { state, dispatch, outline }),
-    createElement(Thread, { context, lines: state.lines }),
+    createElement(Thread, { context, lines: state.lines, tools, history }),
     layout.drawerOpen && context
       ? createElement(
           "section",
