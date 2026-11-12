@@ -113,7 +113,8 @@ describe('ChatThreads', () => {
     await expect(t.chat.ensure()).rejects.toThrow('disk full')
     expect(t.sdk.threads.spawn).toHaveBeenCalledTimes(1)
     t.sdk.projects.get.mockResolvedValue({ id: 'p-new' })
-    t.sdk.threads.list.mockResolvedValue([{ id: 't-new', displayTitle: 'Foundry', createdAt: 9 }])
+    const live = [{ id: 't-new', displayTitle: 'Foundry', createdAt: 9 }]
+    t.sdk.threads.list.mockImplementation(async (a: { offset?: number }) => live.slice(a.offset ?? 0))
     expect(await t.chat.ensure()).toEqual({ projectId: 'p-new', threadId: 't-new' })
     expect(t.sdk.threads.spawn).toHaveBeenCalledTimes(1)
     expect(t.saved()).toEqual({ projectId: 'p-new', threadId: 't-new' })
@@ -131,6 +132,13 @@ describe('ChatThreads', () => {
     const others = Array.from({ length: 230 }, (_, i) => ({ id: `t-o${i}`, displayTitle: 'Other', createdAt: i + 10 }))
     const t = setup({ listProjects: [orphanProject()], listThreads: [...others, { id: 't-old', displayTitle: 'Foundry', createdAt: 1 }] })
     expect(await t.chat.ensure()).toEqual({ projectId: 'p-orphan', threadId: 't-old' })
+    expect(t.sdk.threads.spawn).not.toHaveBeenCalled()
+  })
+
+  it('refuses to make a thread when it cannot see all of the project\'s threads', async () => {
+    const others = Array.from({ length: 10_000 }, (_, i) => ({ id: `t-o${i}`, displayTitle: 'Other', createdAt: i + 10 }))
+    const t = setup({ listProjects: [orphanProject()], listThreads: [...others, { id: 't-old', displayTitle: 'Foundry', createdAt: 1 }] })
+    await expect(t.chat.ensure()).rejects.toThrow(/too many threads/)
     expect(t.sdk.threads.spawn).not.toHaveBeenCalled()
   })
 

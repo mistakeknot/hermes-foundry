@@ -86,9 +86,13 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   const tools = useMemo(() => new AgentEdits(edits, () => scope.current ?? { projects: [], threads: [] }), [edits]);
   useEffect(() => {
     let active = true;
-    const look = () => rpc.call('chat.project', {}).then(
-      r => { if (active) setLookup({ done: true, projectId: typeof r?.projectId === 'string' ? r.projectId : null }); },
-      () => { if (active) setLookup(l => ({ done: true, projectId: l.projectId })); });
+    let latest = 0; // a reply to an older lookup must not overwrite a newer one
+    const look = () => {
+      const mine = ++latest;
+      return rpc.call('chat.project', {}).then(
+        r => { if (active && mine === latest) setLookup({ done: true, projectId: typeof r?.projectId === 'string' ? r.projectId : null }); },
+        () => { if (active && mine === latest) setLookup(l => ({ done: true, projectId: l.projectId })); });
+    };
     void look();
     rpc.call('chat.ensure', {}).then(
       ids => { if (active) setChat(ids?.projectId && ids?.threadId ? { status: 'ready', projectId: ids.projectId, threadId: ids.threadId } : { status: 'error', message: 'unexpected reply' }); },

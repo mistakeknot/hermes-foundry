@@ -4,12 +4,13 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 
-const state = vi.hoisted(() => ({ chat: 'ok' as 'ok' | 'fail', project: 'pc' as string | null | 'fail' | 'later', projectCalls: 0, chatCalls: 0, sidebar: { status: 'loading' } as Record<string, unknown>, registers: 0, lastRest: null as unknown, handlers: new Map<string, (p: unknown) => void>(), bridge: [] as [string, unknown][], values: new Map<string, object>() }))
+const state = vi.hoisted(() => ({ chat: 'ok' as 'ok' | 'fail', project: 'pc' as string | null | 'fail' | 'later' | 'stale', release: null as null | (() => void), projectCalls: 0, chatCalls: 0, sidebar: { status: 'loading' } as Record<string, unknown>, registers: 0, lastRest: null as unknown, handlers: new Map<string, (p: unknown) => void>(), bridge: [] as [string, unknown][], values: new Map<string, object>() }))
 vi.mock('@get-bb/plugin-sdk/app', () => {
   const sdk = { threadSections: { list: async () => [] } }
   const values = state.values
   const rpc = { call: async (method: string, args: { projectId: string; patch?: object }) => {
-    if (method === 'chat.project') { if (state.project === 'fail') throw new Error('lookup failed'); if (state.project === 'later') return { projectId: state.projectCalls++ === 0 ? null : 'pc' }; return { projectId: state.project } }
+    if (method === 'chat.project') { if (state.project === 'fail') throw new Error('lookup failed'); if (state.project === 'stale') { if (state.projectCalls++ === 0) return new Promise(res => { state.release = () => res({ projectId: null }) }); return { projectId: 'pc' } }
+      if (state.project === 'later') return { projectId: state.projectCalls++ === 0 ? null : 'pc' }; return { projectId: state.project } }
     if (method === 'chat.ensure') { state.chatCalls++; if (state.chat === 'fail') throw new Error('bb said no'); return { projectId: 'pc', threadId: 'tc' } }
     if (method.startsWith('edit.')) { state.bridge.push([method, args]); return true }
     if (method === 'lineage.set') values.set(args.projectId, { ...values.get(args.projectId), ...args.patch })
@@ -49,6 +50,7 @@ describe('FoundryPanel lifecycle', () => {
     state.chat = 'ok'
     state.project = 'pc'
     state.projectCalls = 0
+    state.release = null
     state.chatCalls = 0
     state.registers = 0
     state.bridge = []
@@ -92,6 +94,19 @@ describe('FoundryPanel lifecycle', () => {
     state.chat = 'fail'
     await paint()
     expect(state.projectCalls).toBe(2)
+    expect(host.querySelectorAll('[data-foundry=creature]').length).toBe(1)
+  })
+
+  it('ignores a slow first lookup that answers after the recovery lookup', async () => {
+    const sidebar = ready('First') as { projects: { id: string; name: string }[]; threads: Record<string, unknown>[] }
+    sidebar.projects.push({ id: 'pc', name: 'Foundry' })
+    sidebar.threads.push({ ...sidebar.threads[0], id: 'tc', projectId: 'pc', displayTitle: 'Foundry chat' })
+    state.sidebar = sidebar
+    state.project = 'stale'
+    state.chat = 'fail'
+    await paint()
+    expect(state.projectCalls).toBe(2)
+    await act(async () => { state.release!() })
     expect(host.querySelectorAll('[data-foundry=creature]').length).toBe(1)
   })
 

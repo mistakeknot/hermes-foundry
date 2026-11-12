@@ -40,7 +40,7 @@ export const CHAT_INTRO = [
 ].join('\n')
 
 const LIST_PAGE = 100
-const LIST_PAGE_CAP = 100 // 10,000 threads in one project; beyond that adoption gives up and a new thread is made
+const LIST_PAGE_CAP = 100 // 10,000 threads in one project; beyond that the search is incomplete and no thread is made
 const isMissing = (e: unknown) => typeof e === 'object' && e !== null && (e as { status?: unknown }).status === 404
 const isGone = (v: unknown) => typeof v === 'object' && v !== null && ((v as { deletedAt?: unknown }).deletedAt != null || (v as { archivedAt?: unknown }).archivedAt != null)
 const field = (v: unknown, k: string): unknown => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>)[k] : undefined)
@@ -98,7 +98,8 @@ export class ChatThreads {
       if (!rows.length) return all
       all.push(...rows)
     }
-    return all
+    // Not seeing every thread means an orphan could be hidden, so making another could duplicate it.
+    throw new Error('the Foundry project has too many threads to search for an earlier Foundry thread')
   }
 
   private async primaryHost(): Promise<string> {
