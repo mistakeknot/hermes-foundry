@@ -55,8 +55,8 @@ describe('runBbSectionsCheck', () => {
 
   it('reports the rename updatedThreadCount', async () => {
     const r = await runBbSectionsCheck(new FakeBb({ threads: [['t_1', 'proj1']] }))
-    expect(r).toMatchObject({ ok: true, renameUpdatedThreadCount: 1 })
-    expect(r.steps.find((s) => s.step === 'rename')?.detail).toMatch(/updatedThreadCount 1/)
+    expect(r).toMatchObject({ ok: true, renameUpdatedThreadCount: 0 })
+    expect(r.steps.find((s) => s.step === 'rename')?.detail).toMatch(/updatedThreadCount 0/)
   })
 
   it.each([['missing', undefined], ['non-numeric', '1']])('fails the rename step when updatedThreadCount is %s, and still cleans up', async (_label, bad) => {
@@ -66,20 +66,28 @@ describe('runBbSectionsCheck', () => {
     const r = await runBbSectionsCheck(bb)
     expect(r.ok).toBe(false)
     expect(r.renameUpdatedThreadCount).toBeNull()
-    expect(r.steps.find((s) => s.step === 'rename')).toMatchObject({ ok: false, detail: expect.stringMatching(/expected 1/) })
+    expect(r.steps.find((s) => s.step === 'rename')).toMatchObject({ ok: false, detail: expect.stringMatching(/whole number of 0 or more/) })
     expect(bb.rawSections()).toEqual([])
     expect(r.leftBehind).toEqual([])
   })
 
-  it('fails when bb reports an updatedThreadCount other than the one thread', async () => {
+  it.each([[-1], [1.5]])('fails the rename step when updatedThreadCount is %s', async (bad) => {
     const bb = new FakeBb({ threads: [['t_1', 'proj1']] })
     const real = bb.threadSections.update
-    bb.threadSections.update = async (a) => ({ ...(await real(a)), updatedThreadCount: 0 })
+    bb.threadSections.update = async (a) => ({ ...(await real(a)), updatedThreadCount: bad })
     const r = await runBbSectionsCheck(bb)
     expect(r.ok).toBe(false)
-    expect(r.renameUpdatedThreadCount).toBe(0)
+    expect(r.renameUpdatedThreadCount).toBe(bad)
     expect(r.steps.find((s) => s.step === 'rename')).toMatchObject({ ok: false })
     expect(bb.rawSections()).toEqual([]) // still cleaned up
+  })
+
+  it('accepts any whole updatedThreadCount of 0 or more', async () => {
+    const bb = new FakeBb({ threads: [['t_1', 'proj1']] })
+    const real = bb.threadSections.update
+    bb.threadSections.update = async (a) => ({ ...(await real(a)), updatedThreadCount: 3 })
+    const r = await runBbSectionsCheck(bb)
+    expect(r).toMatchObject({ ok: true, renameUpdatedThreadCount: 3 })
   })
 
   describe('when putting the thread back fails', () => {

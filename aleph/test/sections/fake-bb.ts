@@ -1,7 +1,7 @@
 // A fake of the bb SDK surface the bb sections backend uses, behaving like the real server where it matters:
 //  - sections are GLOBAL and name-only; names are unique by EXACT text (case-sensitive), a clash is HTTP 409 `section_name_conflict`;
 //  - the section list comes back ordered by name, not by creation;
-//  - rename returns `updatedThreadCount`; delete clears every assignment and deletes no thread;
+//  - rename returns `updatedThreadCount` (0 in the live bb); delete clears every assignment and deletes no thread;
 //  - `threads.update` with a `sectionId` (or null) moves a thread and bumps its `updatedAt`;
 //  - `threads.list` filters by project / section / ids and pages with limit and offset (a call returns at most 200 rows);
 //  - unknown ids are HTTP 404.
@@ -85,8 +85,8 @@ export class FakeBb implements BbSectionsSdk {
       if (this.nameTaken(name, id)) throw new FakeBbHttpError(409, 'section_name_conflict', `a section named "${name}" already exists`)
       row.name = name
       row.updatedAt = this.tick()
-      const updatedThreadCount = [...this.threadRows.values()].filter((t) => t.sectionId === id).length
-      return { id, name, updatedThreadCount }
+      // The live bb answers 0 on a rename: threads point at the section by id, so no thread row is rewritten.
+      return { id, name, updatedThreadCount: 0 }
     },
     delete: async ({ id }): Promise<BbSectionMutation> => {
       this.enter('threadSections.delete')
