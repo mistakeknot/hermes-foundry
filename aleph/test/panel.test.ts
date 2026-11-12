@@ -4,15 +4,16 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 
-const state = vi.hoisted(() => ({ sidebar: { status: 'loading' } as Record<string, unknown>, registers: 0, lastRest: null as unknown }))
+const state = vi.hoisted(() => ({ sidebar: { status: 'loading' } as Record<string, unknown>, registers: 0, lastRest: null as unknown, handlers: new Map<string, (p: unknown) => void>(), bridge: [] as [string, unknown][], values: new Map<string, object>() }))
 vi.mock('@get-bb/plugin-sdk/app', () => {
   const sdk = { threadSections: { list: async () => [] } }
-  const values = new Map<string, object>()
+  const values = state.values
   const rpc = { call: async (method: string, args: { projectId: string; patch?: object }) => {
+    if (method.startsWith('edit.')) { state.bridge.push([method, args]); return true }
     if (method === 'lineage.set') values.set(args.projectId, { ...values.get(args.projectId), ...args.patch })
     return structuredClone(values.get(args.projectId) ?? {})
   } }
-  return { experimental_useSidebarThreads: () => state.sidebar, useSdk: () => sdk, useRpc: () => rpc }
+  return { experimental_useSidebarThreads: () => state.sidebar, useSdk: () => sdk, useRpc: () => rpc, useRealtime: (channel: string, h: (p: unknown) => void) => { state.handlers.set(channel, h) } }
 })
 vi.mock('../../desktop/src/plugin', () => ({
   default: {
@@ -43,6 +44,9 @@ describe('FoundryPanel lifecycle', () => {
   beforeEach(() => {
     state.sidebar = { status: 'loading' }
     state.registers = 0
+    state.bridge = []
+    state.values.clear()
+    state.handlers.clear()
     host = document.createElement('div')
     root = createRoot(host)
   })
@@ -64,6 +68,16 @@ describe('FoundryPanel lifecycle', () => {
     expect(host.textContent).toContain('Undid: Lineage: Phoenix')
     await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
     expect(host.textContent).toContain('Name: Alpha; lineage: Seeded')
+  })
+
+  it('runs a bridged edit.call through the same dispatcher the pane shows, then reports it', async () => {
+    state.sidebar = ready('First')
+    await paint()
+    expect([...state.handlers.keys()]).toEqual(['edit.call'])
+    await act(async () => { state.handlers.get('edit.call')!({ callId: 'c1', call: { name: 'pick_lineage', arguments: { projectId: 'p1', name: 'Phoenix' } } }) })
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    expect(state.bridge.map(([m]) => m)).toEqual(['edit.claim', 'edit.report'])
+    expect(state.bridge[1][1]).toMatchObject({ callId: 'c1', result: { ok: true, status: 'committed' } })
   })
 
   it('renders one form history entry and undoes a lineage edit from the thread', async () => {
