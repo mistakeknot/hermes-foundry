@@ -4,7 +4,7 @@ Repeatable checks of the Foundry pane on a clean, scratch Hermes home. Each subc
 starts the Hermes Webapp on a free loopback port, drives headless Chromium through `bb browser-automation`,
 and stops everything it started on exit (it removes the home's files too, unless `--keep`).
 
-    export BB_THREAD_STORAGE=/path/to/your/thread/storage   # required; there is no /tmp fallback
+    export FOUNDRY_REHEARSAL_BASE=/path/to/rehearsal/base   # required; there is no /tmp fallback
     export HERMES_SRC=/path/to/hermes-agent                 # a Hermes checkout (renderer and Python path); see Prerequisites
     export HERMES_PY=/path/to/hermes/venv/bin/python        # optional
     python3 scripts/rehearsal/rehearse.py install     # clean-home install rehearsal, PASS/FAIL
@@ -13,7 +13,7 @@ and stops everything it started on exit (it removes the home's files too, unless
     python3 scripts/rehearsal/rehearse.py perf --cards 110   # frame pacing; check `uptime` first
     python3 scripts/rehearsal/rehearse.py soak --cards 110   # long-session soak: scene churn, touch input, remount disposal (--updates N, --cycles N)
     python3 scripts/rehearsal/rehearse.py verdict out/checklist.json   # re-judge a saved checklist (exit 0 only for a complete, passing run)
-    python3 scripts/rehearsal/rehearse.py selftest    # offline checks: redaction, confinement, ownership, verdict, screenshot names (needs BB_THREAD_STORAGE)
+    python3 scripts/rehearsal/rehearse.py selftest    # offline checks: redaction, confinement, ownership, verdict, screenshot names (needs FOUNDRY_REHEARSAL_BASE)
 
 The plugin is installed from the committed HEAD of this repository (`SRC_URL` overrides), so commit before a rehearsal.
 Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering is software WebGL: frame rates are software-rendered observations under the recorded host load; no minimum or typical rate is established.
@@ -35,7 +35,8 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
 
 ## What the harness guarantees
 
-- **Confinement.** `BB_THREAD_STORAGE` must be an absolute existing directory (not `/`, your home or the system temp dir).
+- **Confinement.** `FOUNDRY_REHEARSAL_BASE` must be an absolute existing directory (not `/`, your home or the system temp dir).
+  This harness-specific variable is required; it does not inherit a base directory from the calling application.
   Each run creates a fresh `foundry-rh-run.*` directory under it (printed as `RUN`) and puts scratch homes, temporary
   scripts, temp files and evidence there. There are no `RH_ROOT` or `OUT` overrides, and every path is checked to resolve
   inside the run directory.
@@ -50,7 +51,11 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
   Owned processes are always stopped. `--keep` only keeps files: the scratch home and run directory stay for inspection,
   but the Webapp and its helpers are stopped on success, failure and signals alike, so nothing is left running.
   A cleanup failure fails the run and is never swallowed. A run that is killed with SIGKILL, or a host crash, cannot clean up:
-  look for leftover `foundry-rh-run.*` directories under thread storage.
+  the next run sweeps marked, non-retained runs older than its start under the same harness base directory.
+  A run-level lease prevents sweeping a live harness. Recovery checks directory and marker ownership, refuses
+  symlinked run/marker/homes paths, and retains runs with identifiable surviving home processes. Unmarked
+  legacy directories and `--keep` runs are left for inspection. Only `homes/` and `tmp/` are removed;
+  `out/` evidence stays. A final run cleanup and an `atexit` retry cover partially initialized homes too.
 - **No kill by port.** Every Hermes process is started with a per-run token in its environment. A process is signalled only if it
   belongs to this user, is not the harness, and its environment names both this run's scratch `HERMES_HOME` and the token.
   A process that merely listens on the port is reported and left alone. `cleanup_home.sh` removes a home only if it is a direct child of
@@ -70,7 +75,7 @@ Results are JSON plus JPEG screenshots in the run's `out/` directory. Rendering 
 - **`verdict` is strict.** It reads nothing into missing data: the saved result must hold the fixed three-trial plan, non-empty
   pane and board trials, exactly one matching database row per trial (six, each equal to the plan), the measured floor, `pass: true` and an empty `failures` list (a recorded
   harness or cleanup failure fails it), and then every trial, UI, scene and database check is re-judged.
-- **`selftest` is confined too.** It needs `BB_THREAD_STORAGE`, makes its scratch directory inside its own run directory
+- **`selftest` is confined too.** It needs `FOUNDRY_REHEARSAL_BASE`, makes its scratch directory inside its own run directory
   (not the system temp dir) and removes that run directory when it ends.
 
 ## Soak: what it judges, and two measured runs

@@ -13,26 +13,26 @@ removed too unless --keep, which retains files only):
             The live run seeds blocked and done cards; a missing card or screenshot fails the run.
   verdict F re-judge a saved checklist.json (exit 0 only if it is a complete, passing run of the fixed three-trial
             plan: no missing section and no recorded harness or cleanup failure).
-  selftest  offline unit checks; needs BB_THREAD_STORAGE, runs inside its own run directory and removes it afterwards.
+  selftest  offline unit checks; needs FOUNDRY_REHEARSAL_BASE, runs inside its own run directory and removes it afterwards.
   up/down   (not provided: every run owns its scratch home)
 
 --keep: owned processes (the Webapp and its helpers) are ALWAYS stopped, on success, failure and signals. --keep only
 retains the scratch home's files (and the run directory) for inspection; nothing is left running.
 The browser session is closed on every exit path, including a failed or timed-out open (see README, Cleanup).
 
-Confinement (no override, no fallback): BB_THREAD_STORAGE must name your thread storage directory. Each run makes a
+Confinement (no override, no fallback): FOUNDRY_REHEARSAL_BASE must name the harness base directory. Each run makes a
 fresh directory foundry-rh-run.* under it and keeps everything inside: scratch homes (homes/), temporary scripts and
 temp files (inside the home), and evidence (out/). The path is printed as RUN. selftest is confined the same way.
 
 Environment:
-  BB_THREAD_STORAGE  thread storage directory [required]
+  FOUNDRY_REHEARSAL_BASE  harness base directory [required]
   HERMES_SRC  Hermes checkout used as PYTHONPATH and for the prebuilt Webapp renderer [required]
   HERMES_PY   python of the Hermes venv [the interpreter named in the `hermes` shebang]
   SRC_URL     where `hermes plugins install` reads the plugin [file://<this repo>] (committed HEAD only)
   BB_HOST     host id for `bb browser-automation` [from `bb status --json`]
   SHOTS_MODES fixture,live   (only these two values are accepted; they become part of file names)
 """
-import argparse, contextlib, json, os, re, secrets, shutil, signal, socket, subprocess, sys, tempfile, time
+import argparse, atexit, contextlib, fcntl, json, os, re, secrets, shutil, signal, socket, stat, subprocess, sys, tempfile, time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SRC = os.environ.get("HERMES_SRC")
@@ -43,6 +43,8 @@ TOKEN = secrets.token_hex(8)        # marks every process and home this run owns
 LAUNCHED = []                       # pids of every Hermes process this run started directly
 SECRETS = set()                     # sign-in tickets seen this run: redacted everywhere
 STORAGE = RUN = RH_ROOT = OUT = None
+RUN_CLEANUP = None
+ACTIVE_HOMES = []
 MODES = ("fixture", "live")         # the only SHOTS_MODES values
 CHECKLIST_PLAN = [["blocked", "coder"], ["blocked", "reviewer"], ["blocked", "coder"]]     # the fixed three-trial plan
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -79,12 +81,12 @@ def inside(path, root):
 
 
 def confine(storage_env):
-    """Create the unique run directory under thread storage and return (storage, run, homes, out). No fallback."""
+    """Create the unique run directory under the harness base and return (storage, run, homes, out). No fallback."""
     if not storage_env or not os.path.isabs(storage_env) or not os.path.isdir(storage_env):
-        sys.exit("BB_THREAD_STORAGE must be set to your absolute thread storage directory (there is no /tmp fallback)")
+        sys.exit("FOUNDRY_REHEARSAL_BASE must name an absolute harness base directory (there is no /tmp fallback)")
     storage = os.path.realpath(storage_env)
     if storage in ("/", os.path.realpath(os.path.expanduser("~")), os.path.realpath(tempfile.gettempdir())):
-        sys.exit("refusing: BB_THREAD_STORAGE resolves to " + storage)
+        sys.exit("refusing: FOUNDRY_REHEARSAL_BASE resolves to " + storage)
     run = tempfile.mkdtemp(prefix="foundry-rh-run.", dir=storage)
     os.chmod(run, 0o700)
     homes, out, tmp = (os.path.join(run, d) for d in ("homes", "out", "tmp"))
@@ -95,11 +97,126 @@ def confine(storage_env):
     return storage, run, homes, out
 
 
-def init_run(need_src=True):
-    global STORAGE, RUN, RH_ROOT, OUT
+class RunCleanup:
+    """A locked, owner-checked lease; only homes/tmp beneath this run can be removed."""
+    MARKER = ".foundry-rh-run"
+
+    def __init__(self, storage, run, keep=False, create=False):
+        self.fd = self.lock = None
+        if (os.path.dirname(run) != storage or
+                not re.fullmatch(r"foundry-rh-run\.[A-Za-z0-9_-]+", os.path.basename(run))):
+            raise ValueError("not a direct rehearsal run")
+        self.run, self.keep = run, keep
+        try:
+            self.fd = os.open(run, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            st = os.fstat(self.fd)
+            if st.st_uid != os.getuid() or st.st_mode & 0o022:
+                raise ValueError("run is not privately owned")
+            self.created = st.st_mtime_ns
+            self.lock = os.open(self.MARKER, os.O_RDWR | os.O_NOFOLLOW |
+                                (os.O_CREAT | os.O_EXCL if create else 0), 0o600, dir_fd=self.fd)
+            st = os.fstat(self.lock)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_nlink != 1:
+                raise ValueError("invalid run marker")
+            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if create:
+                os.write(self.lock, json.dumps({"version": 1, "keep": keep}).encode())
+            else:
+                data = json.loads(os.read(self.lock, 4096))
+                if not isinstance(data, dict) or data.get("version") != 1 or type(data.get("keep")) is not bool:
+                    raise ValueError("unknown run marker")
+                self.keep = data["keep"]
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        for attr in ("lock", "fd"):
+            fd = getattr(self, attr)
+            if fd is not None:
+                os.close(fd)
+                setattr(self, attr, None)
+
+    def busy(self):
+        # A crashed harness can leave children alive even though its lease was released.
+        prefix = ("HERMES_HOME=" + os.path.join(self.run, "homes") + os.sep).encode()
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit() or int(pid) == os.getpid():
+                continue
+            try:
+                if os.stat("/proc/" + pid).st_uid != os.getuid():
+                    continue
+                with open("/proc/" + pid + "/environ", "rb") as f:
+                    if any(v.startswith(prefix) for v in f.read().split(b"\0")):
+                        return True
+            except FileNotFoundError:
+                continue
+            except PermissionError:
+                # Other same-uid services may be non-dumpable. The lease is the
+                # authoritative live-harness check, independent of /proc access.
+                continue
+            except OSError:
+                return True
+        return False
+
+    def clean(self):
+        if self.fd is None or self.keep:
+            return
+        if self.busy():
+            raise RuntimeError("run still has processes; files retained: " + self.run)
+        if not shutil.rmtree.avoids_symlink_attacks:
+            raise RuntimeError("safe directory removal is unavailable")
+        for name in ("homes", "tmp"):
+            try:
+                st = os.stat(name, dir_fd=self.fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+                raise RuntimeError("refusing unowned or symlinked " + name)
+            shutil.rmtree(name, dir_fd=self.fd)
+
+    def at_exit(self):
+        if self.fd is None:
+            return
+        try:
+            with uninterruptible():
+                for st in ACTIVE_HOMES:
+                    if os.path.dirname(st["home"]) == os.path.join(self.run, "homes"):
+                        stop_home(st)
+                self.clean()
+        except Exception as e:
+            print("cleanup fallback failed: " + redact(e), file=sys.stderr)
+        finally:
+            self.close()
+
+
+def sweep_stale(storage, before):
+    """Never infer ownership from a name alone: old unmarked runs are left untouched."""
+    for name in os.listdir(storage):
+        if not re.fullmatch(r"foundry-rh-run\.[A-Za-z0-9_-]+", name):
+            continue
+        lease = None
+        try:
+            lease = RunCleanup(storage, os.path.join(storage, name))
+            if lease.created < before:
+                lease.clean()
+        except (OSError, ValueError, RuntimeError):
+            continue                            # unknown, live, foreign, or unsafe: leave alone
+        finally:
+            if lease:
+                lease.close()
+
+
+def init_run(need_src=True, keep=False):
+    global STORAGE, RUN, RH_ROOT, OUT, RUN_CLEANUP
     if need_src and (not SRC or not os.path.isdir(SRC)):
         sys.exit("set HERMES_SRC to a Hermes checkout")
-    STORAGE, RUN, RH_ROOT, OUT = confine(os.environ.get("BB_THREAD_STORAGE"))
+    before = time.time_ns()
+    with uninterruptible():
+        STORAGE, RUN, RH_ROOT, OUT = confine(os.environ.get("FOUNDRY_REHEARSAL_BASE"))
+        RUN_CLEANUP = RunCleanup(STORAGE, RUN, keep=keep, create=True)
+        atexit.register(RUN_CLEANUP.at_exit)
+    sweep_stale(STORAGE, before)
     tempfile.tempdir = os.path.join(RUN, "tmp")
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     print("RUN", RUN, flush=True)
@@ -221,14 +338,17 @@ def write_marker(st):
     with open(path, "w") as f:
         f.write(TOKEN)
     os.chmod(path, 0o600)
-    d = {k: st[k] for k in ("home", "port", "live")}      # no sign-in URL is ever persisted
+    d = {k: st[k] for k in ("home", "port", "live") if k in st}  # no sign-in URL is ever persisted
     with open(os.path.join(st["home"], "rehearsal.json"), "w") as f:
         json.dump(d, f)
 
 
 def _up(st, live, boards, states):
-    hh = tempfile.mkdtemp(prefix="foundry-rh.", dir=RH_ROOT)
-    st.update({"home": hh, "live": live})
+    with uninterruptible():
+        hh = tempfile.mkdtemp(prefix="foundry-rh.", dir=RH_ROOT)
+        st.update({"home": hh, "live": live})
+        ACTIVE_HOMES.append(st)
+        write_marker(st)              # before any fallible setup or pending signal
     if not inside(hh, RUN):
         raise RuntimeError("scratch home escaped the run directory: " + hh)
     for d in ("tmp", "scripts"):
@@ -317,6 +437,8 @@ def down(st, keep=False):
                       + ("processes stopped" if stopped else "processes NOT confirmed stopped") + ")", flush=True)
             else:
                 cleanup_script(st["home"])
+            if st in ACTIVE_HOMES and stopped:
+                ACTIVE_HOMES.remove(st)
 
 
 SEED = r'''
@@ -1038,10 +1160,16 @@ if __name__ == "__main__":
     if a.cmd == "shots":
         shots_modes(os.environ.get("SHOTS_MODES", "fixture,live"))      # refuse a bad value before any directory is made
     if a.cmd != "verdict":
-        init_run(need_src=a.cmd != "selftest")
+        init_run(need_src=a.cmd != "selftest", keep=getattr(a, "keep", False))
     try:
         code = globals()["cmd_" + a.cmd](a)
     finally:
+        if RUN_CLEANUP:
+            with uninterruptible():
+                for st in list(ACTIVE_HOMES):
+                    stop_home(st)
+                RUN_CLEANUP.clean()
+            RUN_CLEANUP.close()
         if a.cmd == "selftest" and RUN and inside(RUN, STORAGE) and os.path.basename(RUN).startswith("foundry-rh-run."):
             shutil.rmtree(RUN, ignore_errors=True)      # the selftest's own run directory, nothing else
     sys.exit(code)
