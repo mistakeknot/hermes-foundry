@@ -41,12 +41,19 @@ threads but does not act on them yet."* Nothing is sent to any thread.
 ## The Foundry chat
 
 The pane's thread area is bb's own chat for one Foundry thread, shown under the selection chip and the edit history. On first
-open the plugin creates (once) a bb project named **Foundry** that points at an empty folder under the plugin's data directory,
-and spawns one visible thread in it, marked `chat: true` so the `foundry_*` edit tools attach to it. The project and thread ids
-are saved in `chat.json` in that directory; if either is deleted or archived the next open makes a new one, and any other
-failure is shown in the pane without creating a duplicate. The Foundry project and its thread are left out of the board and
-the picker. The chat has no files to read or change. If bb will not let a plugin create a project, add the empty folder as a
-project once by hand.
+open the plugin tries to create a bb project named **Foundry** that points at an empty folder under the plugin's data
+directory, and to spawn one visible thread in it, marked `chat: true` so the `foundry_*` edit tools attach to it. The ids are
+saved in `chat.json` in that directory. Before creating anything it looks for a project named Foundry on that folder and a
+live thread titled Foundry in it, so a lost write or reply reuses what an earlier attempt made. If either is deleted or
+archived the next open makes a new one, and any other failure is shown in the pane and creates nothing. This is checked
+within one plugin process only; two processes asking at the same moment could still each create one. The Foundry project and
+its thread are left out of the board and the picker once the plugin has looked the project up.
+
+Not verified against a live bb yet: that a plugin may create a project, that bb accepts an empty folder that is not a git
+repository, that a thread in it starts with the Foundry tools attached, and which provider, model and permission mode the
+thread gets. The folder is empty, but that does not limit the thread to the Foundry tools: bb's own tools and approval
+settings apply to it as to any thread. There is no manual fallback in the plugin; a project added by hand is only picked up
+if it is named Foundry and points at the plugin's `chat-workspace` folder.
 
 ## The Foundry pane (right-hand side)
 

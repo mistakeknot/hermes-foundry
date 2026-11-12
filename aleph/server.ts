@@ -31,7 +31,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     read: () => readChat(chatPath),
     write: saved => writeChat(chatPath, saved),
   });
-  bb.rpc.register(chatContract, { 'chat.ensure': () => chat.ensure() });
+  bb.rpc.register(chatContract, {
+    'chat.ensure': () => chat.ensure(),
+    'chat.project': async () => ({ projectId: await chat.project() }),
+  });
 
   const bridge = new EditBridge((channel, payload) => bb.realtime.publish(channel, payload));
   bb.rpc.register(editContract, {

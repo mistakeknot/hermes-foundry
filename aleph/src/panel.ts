@@ -75,14 +75,20 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   const lastSource = lastReady.current?.status === 'ready' ? lastReady.current : null;
   // The Foundry chat's own project and thread are not part of the user's work, so every consumer below sees the list without them.
   const [chat, setChat] = useState<ChatState>({ status: 'loading' });
-  const chatProjectId = chat.status === 'ready' ? chat.projectId : null;
+  // The chat project's id comes from its own lookup, so the list is filtered even while the thread is still being made or
+  // could not be. The pane waits for that lookup (a local read); if it fails the list is shown unfiltered.
+  const [lookup, setLookup] = useState<{ done: boolean; projectId: string | null }>({ done: false, projectId: null });
+  const chatProjectId = chat.status === 'ready' ? chat.projectId : lookup.projectId;
   chatProjectRef.current = chatProjectId;
-  const source = useMemo(() => lastSource ? excludeChat(lastSource, chatProjectId) : null, [lastSource, chatProjectId]);
+  const source = useMemo(() => lastSource && lookup.done ? excludeChat(lastSource, chatProjectId) : null, [lastSource, lookup.done, chatProjectId]);
   const scope = useRef(source);
   scope.current = source;
   const tools = useMemo(() => new AgentEdits(edits, () => scope.current ?? { projects: [], threads: [] }), [edits]);
   useEffect(() => {
     let active = true;
+    rpc.call('chat.project', {}).then(
+      r => { if (active) setLookup({ done: true, projectId: typeof r?.projectId === 'string' ? r.projectId : null }); },
+      () => { if (active) setLookup({ done: true, projectId: null }); });
     rpc.call('chat.ensure', {}).then(
       ids => { if (active) setChat(ids?.projectId && ids?.threadId ? { status: 'ready', projectId: ids.projectId, threadId: ids.threadId } : { status: 'error', message: 'unexpected reply' }); },
       (e: unknown) => { if (active) setChat({ status: 'error', message: e instanceof Error ? e.message : 'unknown error' }); });
@@ -108,9 +114,9 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   const [pane, dispatch] = useReducer(paneReducer, initialPaneState);
   useEffect(() => { dispatch({ type: "reconcile", outline }); }, [outline]);
 
-  if (ready && !api.current) {
+  if (ready && projected && !api.current) {
     api.current = new InspectorLiveApi(edits);
-    api.current.update(fromSidebar(projected!, Date.now()));
+    api.current.update(fromSidebar(projected, Date.now()));
   }
   useEffect(() => {
     if (projected && api.current) api.current.update(fromSidebar(projected, Date.now()));
@@ -126,7 +132,7 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   // Mount the pane only once there is live data. Mounting on a failure would make the unchanged pane pick its built-in
   // fixture data and keep it even after the thread list recovers, so a failure before the first data shows an error.
   const page = useMemo(() => {
-    if (!ready && !api.current) return null;
+    if (!api.current) return null;
     let render: (() => unknown) | null = null;
     foundry.register({
       rest: restFromApi(() => api.current),
@@ -137,7 +143,7 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
     return render ? (render as () => unknown)() : null;
     // The pane reads its transport once when it mounts, so mount it once, after the first data.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready || api.current !== null]);
+  }, [api.current !== null]);
 
   if (!page) {
     const message = failed ? "Couldn't load threads. Foundry will draw them when the thread list is available." : "Loading threads…";
