@@ -86,12 +86,18 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   const tools = useMemo(() => new AgentEdits(edits, () => scope.current ?? { projects: [], threads: [] }), [edits]);
   useEffect(() => {
     let active = true;
-    rpc.call('chat.project', {}).then(
+    const look = () => rpc.call('chat.project', {}).then(
       r => { if (active) setLookup({ done: true, projectId: typeof r?.projectId === 'string' ? r.projectId : null }); },
-      () => { if (active) setLookup({ done: true, projectId: null }); });
+      () => { if (active) setLookup(l => ({ done: true, projectId: l.projectId })); });
+    void look();
     rpc.call('chat.ensure', {}).then(
       ids => { if (active) setChat(ids?.projectId && ids?.threadId ? { status: 'ready', projectId: ids.projectId, threadId: ids.threadId } : { status: 'error', message: 'unexpected reply' }); },
-      (e: unknown) => { if (active) setChat({ status: 'error', message: e instanceof Error ? e.message : 'unknown error' }); });
+      (e: unknown) => {
+        if (!active) return;
+        setChat({ status: 'error', message: e instanceof Error ? e.message : 'unknown error' });
+        // Ensure may have made the project before it failed, after the first lookup saw none: look again.
+        void look();
+      });
     return () => { active = false; };
   }, [rpc]);
   const ChatThread = useMemo(() => chatThreadFor(chat), [chat]);

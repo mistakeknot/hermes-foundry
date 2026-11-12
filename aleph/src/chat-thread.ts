@@ -13,7 +13,7 @@ export interface ChatSdk {
   }
   threads: {
     get(args: { threadId: string }): Promise<unknown>
-    list(args: { projectId: string; limit?: number }): Promise<unknown[]>
+    list(args: { projectId: string; limit?: number; offset?: number }): Promise<unknown[]>
     spawn(args: Record<string, unknown>): Promise<{ id: string }>
   }
 }
@@ -39,6 +39,8 @@ export const CHAT_INTRO = [
   'This folder is empty on purpose. Reply with one short line saying you are ready, then wait for the user.',
 ].join('\n')
 
+const LIST_PAGE = 100
+const LIST_PAGE_CAP = 100 // 10,000 threads in one project; beyond that adoption gives up and a new thread is made
 const isMissing = (e: unknown) => typeof e === 'object' && e !== null && (e as { status?: unknown }).status === 404
 const isGone = (v: unknown) => typeof v === 'object' && v !== null && ((v as { deletedAt?: unknown }).deletedAt != null || (v as { archivedAt?: unknown }).archivedAt != null)
 const field = (v: unknown, k: string): unknown => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>)[k] : undefined)
@@ -81,11 +83,22 @@ export class ChatThreads {
 
   /** A live thread titled Foundry in the chat project. The oldest, so every attempt agrees. */
   private async findThread(projectId: string): Promise<string | null> {
-    const rows = await this.deps.sdk.threads.list({ projectId, limit: 50 })
+    const rows = await this.listThreads(projectId)
     const mine = rows
       .filter(t => !isGone(t) && typeof field(t, 'id') === 'string' && (field(t, 'displayTitle') ?? field(t, 'title')) === CHAT_THREAD_TITLE)
       .sort((a, b) => Number(field(a, 'createdAt') ?? 0) - Number(field(b, 'createdAt') ?? 0))
     return mine.length ? field(mine[0], 'id') as string : null
+  }
+
+  /** Every thread of the project, a page at a time until a page comes back empty, so an old orphan is never missed behind newer threads. */
+  private async listThreads(projectId: string): Promise<unknown[]> {
+    const all: unknown[] = []
+    for (let page = 0; page < LIST_PAGE_CAP; page++) {
+      const rows = await this.deps.sdk.threads.list({ projectId, limit: LIST_PAGE, offset: all.length })
+      if (!rows.length) return all
+      all.push(...rows)
+    }
+    return all
   }
 
   private async primaryHost(): Promise<string> {

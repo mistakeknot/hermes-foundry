@@ -21,7 +21,7 @@ function setup(opts: { saved?: { projectId: string; threadId: string | null } | 
     },
     threads: {
       get: vi.fn(async ({ threadId }: { threadId: string }) => { calls.push(`threads.get ${threadId}`); const v = opts.threads?.[threadId]; if (v instanceof Error) throw v; if (v === undefined) throw http(404); return v }),
-      list: vi.fn(async () => opts.listThreads ?? []),
+      list: vi.fn(async (a: { limit?: number; offset?: number }) => (opts.listThreads ?? []).slice(a.offset ?? 0, (a.offset ?? 0) + (a.limit ?? 1000))),
       spawn: vi.fn(async (a: unknown) => { calls.push('threads.spawn'); void a; return { id: 't-new' } }),
     },
   }
@@ -125,6 +125,13 @@ describe('ChatThreads', () => {
     expect(t.sdk.projects.create).not.toHaveBeenCalled()
     expect(t.sdk.threads.spawn).not.toHaveBeenCalled()
     expect(t.saved()).toEqual({ projectId: 'p-orphan', threadId: 't-old' })
+  })
+
+  it('adopts an orphan thread that is behind more than one page of other threads', async () => {
+    const others = Array.from({ length: 230 }, (_, i) => ({ id: `t-o${i}`, displayTitle: 'Other', createdAt: i + 10 }))
+    const t = setup({ listProjects: [orphanProject()], listThreads: [...others, { id: 't-old', displayTitle: 'Foundry', createdAt: 1 }] })
+    expect(await t.chat.ensure()).toEqual({ projectId: 'p-orphan', threadId: 't-old' })
+    expect(t.sdk.threads.spawn).not.toHaveBeenCalled()
   })
 
   it('does not adopt a project that is another name, another folder, or gone', async () => {

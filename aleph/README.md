@@ -45,7 +45,9 @@ open the plugin tries to create a bb project named **Foundry** that points at an
 directory, and to spawn one visible thread in it, marked `chat: true` so the `foundry_*` edit tools attach to it. The ids are
 saved in `chat.json` in that directory. Before creating anything it looks for a project named Foundry on that folder and a
 live thread titled Foundry in it, so a lost write or reply reuses what an earlier attempt made. If either is deleted or
-archived the next open makes a new one, and any other failure is shown in the pane and creates nothing. This is checked
+archived the next open makes a new one. Any other failure is shown in the pane; it can leave a project or thread already
+made (for example when saving their ids fails), and the next open finds and reuses it, but a thread made before the failure
+has already had its introductory turn. This is checked
 within one plugin process only; two processes asking at the same moment could still each create one. The Foundry project and
 its thread are left out of the board and the picker once the plugin has looked the project up.
 
