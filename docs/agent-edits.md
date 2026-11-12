@@ -121,10 +121,22 @@ Foundry pane, so the server half only relays calls to it.
   `AgentEdits.dispatch` and calls `edit.report` with the result. The tool then
   answers the model with "Done: <summary>. Undo with edit id N." or
   "Not done (code): message".
+- Pane identity: each pane makes a random id and sends it with its claim and
+  report; only the claiming pane's report is accepted. The id is not a secret
+  from the pane's own client, and any client of the plugin can still call the
+  RPC, so the boundary is the same trusted-client one the realtime channel
+  already has.
+- Undo: each pane numbers its own edits from 1, so the model is given
+  bridge-wide edit ids instead. An undo is sent only to the pane that made the
+  edit (other panes ignore it and the server refuses their claim). If that
+  pane is closed the undo fails with `pane_unavailable`; an unknown id gives
+  `not_found`. Ids last for the server's run and the last 500 are kept.
 - Timeouts: 10 s for a claim, 30 s for a report. No claim gives
   `pane_unavailable` ("Open the Foundry pane and try again"). A claim with no
-  report says to check the pane before retrying. An abort gives `cancelled`; an
-  already-aborted call is never broadcast.
+  report, or a cancel after the claim, gives `outcome_unknown` ("Not confirmed"):
+  the edit may have been applied, so check the pane before retrying. A cancel
+  before any claim gives `cancelled`; an already-aborted call is never
+  broadcast.
 - Limit: a pane must be open. With no pane, edits fail cleanly and nothing is
   written. Edits made through the bridge are in the pane's history and can be
   undone there like any agent call.

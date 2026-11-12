@@ -19,8 +19,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
 
   const bridge = new EditBridge((channel, payload) => bb.realtime.publish(channel, payload));
   bb.rpc.register(editContract, {
-    'edit.claim': ({ callId }) => bridge.claim(callId),
-    'edit.report': ({ callId, result }) => bridge.report(callId, result),
+    'edit.claim': ({ callId, paneId }) => bridge.claim(callId, paneId),
+    'edit.report': ({ callId, paneId, result }) => bridge.report(callId, paneId, result),
   });
   for (const op of operations) {
     bb.agents.registerTool({
@@ -28,7 +28,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       description: op.description,
       parameters: op.parameters as unknown as Record<string, unknown>,
       async execute(params, ctx) {
-        const { text, isError } = toolText(await bridge.call({ name: op.name, arguments: params }, ctx.signal));
+        const { text, isError } = toolText(await bridge.call({ name: op.name, arguments: (params ?? {}) as Record<string, unknown> }, ctx.signal));
         return { content: [{ type: 'text', text }], isError };
       },
     });

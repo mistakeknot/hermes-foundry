@@ -72,7 +72,8 @@ export const FoundryPanel: FunctionComponent<{ Thread?: ThreadComponent }> = ({ 
   const scope = useRef(source);
   scope.current = source;
   const tools = useMemo(() => new AgentEdits(edits, () => scope.current ?? { projects: [], threads: [] }), [edits]);
-  useRealtime('edit.call', payload => { void runBridgedCall(payload, tools, rpc); });
+  const paneId = useRef(crypto.randomUUID());
+  useRealtime('edit.call', payload => { void runBridgedCall(payload, tools, rpc, paneId.current); });
   const projected = useMemo(() => source ? edits.sidebar(source) : null, [source, edits, revision]);
   const outline = useMemo(() => projected ? buildOutline(projected) : [], [projected]);
   useEffect(() => {
