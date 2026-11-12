@@ -1,6 +1,6 @@
 # Foundry for Aleph (bb plugin)
 
-The same 3D board as the Hermes plugin, drawn from your bb projects and threads. **Read-only.**
+The same 3D board as the Hermes plugin, drawn from your bb projects and threads. The board is read-only; the pane's chat and inspector make small edits (rename a section, move a thread, pick or re-roll a look), each with Undo.
 
 | bb | Foundry |
 | --- | --- |
@@ -37,6 +37,16 @@ board. Tests with more than 240 threads, and a check that the outline and the bo
 
 The pane's command buttons (pause, reset and the like) answer with a read-only error: *"Foundry is read-only here: it shows
 threads but does not act on them yet."* Nothing is sent to any thread.
+
+## The Foundry chat
+
+The pane's thread area is bb's own chat for one Foundry thread, shown under the selection chip and the edit history. On first
+open the plugin creates (once) a bb project named **Foundry** that points at an empty folder under the plugin's data directory,
+and spawns one visible thread in it, marked `chat: true` so the `foundry_*` edit tools attach to it. The project and thread ids
+are saved in `chat.json` in that directory; if either is deleted or archived the next open makes a new one, and any other
+failure is shown in the pane without creating a duplicate. The Foundry project and its thread are left out of the board and
+the picker. The chat has no files to read or change. If bb will not let a plugin create a project, add the empty folder as a
+project once by hand.
 
 ## The Foundry pane (right-hand side)
 
