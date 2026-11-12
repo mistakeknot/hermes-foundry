@@ -92,6 +92,7 @@ it('routes an undo only to the pane that made the edit, even when two panes both
 it('words results for the model without the project state', () => {
   expect(toolText({ ok: true, status: 'committed', editId: 4, summary: 'Moved t', state: { big: 1 } })).toEqual({ text: 'Done: Moved t. Undo with edit id 4.', isError: false })
   expect(toolText({ ok: true, status: 'committed_refresh_failed', editId: 5, summary: 'x' }).text).toMatch(/could not refresh/)
+  expect(toolText({ ok: true, status: 'committed', editId: 6, summary: 'Undid x' }, 'undo_edit')).toEqual({ text: 'Done: Undid x.', isError: false })
   expect(toolText({ ok: false, error: { code: 'not_found', message: 'No such section' } })).toEqual({ text: 'Not done (not_found): No such section', isError: true })
 })
 

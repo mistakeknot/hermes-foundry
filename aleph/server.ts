@@ -28,7 +28,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       description: op.description,
       parameters: op.parameters as unknown as Record<string, unknown>,
       async execute(params, ctx) {
-        const { text, isError } = toolText(await bridge.call({ name: op.name, arguments: (params ?? {}) as Record<string, unknown> }, ctx.signal));
+        const { text, isError } = toolText(await bridge.call({ name: op.name, arguments: (params ?? {}) as Record<string, unknown> }, ctx.signal), op.name);
         return { content: [{ type: 'text', text }], isError };
       },
     });
